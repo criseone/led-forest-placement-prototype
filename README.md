@@ -40,7 +40,13 @@ Open:
 http://127.0.0.1:5174/
 ```
 
-The app intentionally uses port `5174` because `5173` is often occupied by other Vite projects.
+For phone or tablet testing on the same Wi-Fi, open the laptop's LAN address with the same port, for example:
+
+```text
+http://192.168.178.40:5174/
+```
+
+The app intentionally uses port `5174` because `5173` is often occupied by other Vite projects. The dev server binds to `0.0.0.0` so other devices on the LAN can reach it.
 
 ## Scripts
 
@@ -77,4 +83,3 @@ Reference project:
 - Scene objects are simple context geometry, not full CAD/BIM objects.
 - No persistence/export format is implemented yet.
 - Gamepad support is a prototype mapping and should be tested on actual hardware.
-

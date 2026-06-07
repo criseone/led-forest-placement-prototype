@@ -11,6 +11,12 @@ npm run dev
 
 Open `http://127.0.0.1:5174/`.
 
+For mobile testing on the same Wi-Fi, open the laptop's LAN address with the same port. On the current network that is:
+
+```text
+http://192.168.178.40:5174/
+```
+
 If port `5174` is already in use, edit the `dev` script in `package.json` or run Vite manually with another port.
 
 ## Navigation
