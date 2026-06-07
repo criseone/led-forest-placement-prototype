@@ -14,7 +14,9 @@ const MOVE_SPEED = 3.2;
 const LOOK_SPEED = 0.0022;
 const TOUCH_LOOK_SPEED = 0.003;
 const DRAG_TAP_THRESHOLD = 8;
+const DRAG_PLANE_MIN_ALIGNMENT = 0.08;
 const GAMEPAD_DEADZONE = 0.18;
+const GAMEPAD_EDIT_SPEED = 1.15;
 
 const canvas = document.querySelector('#scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -754,7 +756,6 @@ const placement = {
   active: true,
   source: 'new',
   mode: 'magnetic-plane',
-  distanceFromCamera: 5.2,
   heightOffset: 0,
   rotationAxis: 'view-z',
   magneticThreshold: 0.42,
@@ -801,12 +802,6 @@ function dispatch(action) {
     case 'AIM':
       aimNdc.x = (action.screenX / window.innerWidth) * 2 - 1;
       aimNdc.y = -(action.screenY / window.innerHeight) * 2 + 1;
-      break;
-    case 'ADJUST_DISTANCE':
-      setHeldDistance(placement.distanceFromCamera + action.delta);
-      break;
-    case 'SET_DISTANCE':
-      setHeldDistance(action.value);
       break;
     case 'ADJUST_HEIGHT':
       placement.heightOffset = clamp(placement.heightOffset + action.delta, -2, 4);
@@ -861,9 +856,10 @@ function startNewTube() {
   placement.source = 'new';
   heldTube.visible = true;
   heldTube.quaternion.identity();
-  camera.getWorldDirection(tempDirection);
-  placement.position.copy(camera.position).addScaledVector(tempDirection, placement.distanceFromCamera);
-  placement.position.y = placement.heightOffset;
+  placement.heightOffset = 0;
+  const spawnPoint = getReticleGroundPoint();
+  placement.position.copy(spawnPoint);
+  placement.position.y = getSceneSurfaceHeightAt(spawnPoint.x, spawnPoint.z);
   gestureLabel = 'New Tube';
   syncSliders();
 }
@@ -876,7 +872,6 @@ function selectTube(tube) {
   heldTube.quaternion.copy(tube.quaternion);
   heldTube.visible = true;
   placedGroup.remove(tube);
-  syncDistanceFromCamera();
   syncSliders();
 }
 
@@ -887,7 +882,6 @@ function copyTube(tube) {
   placement.position.copy(tube.position);
   heldTube.quaternion.copy(tube.quaternion);
   heldTube.visible = true;
-  syncDistanceFromCamera();
   syncSliders();
   gestureLabel = 'Copied';
 }
@@ -941,17 +935,6 @@ function inferRotationAxis() {
   return tempAxis.set(0, 0, 1);
 }
 
-function setHeldDistance(value) {
-  placement.distanceFromCamera = clamp(value, 1, 12);
-  if (placement.active) {
-    const currentHeight = placement.position.y;
-    camera.getWorldDirection(tempDirection);
-    placement.position.copy(camera.position).addScaledVector(tempDirection, placement.distanceFromCamera);
-    placement.position.y = currentHeight;
-  }
-  syncSliders();
-}
-
 function moveHeldTubeFromMouse(deltaX, deltaY) {
   if (!placement.active) return;
   tempRight.setFromMatrixColumn(camera.matrixWorld, 0);
@@ -960,9 +943,20 @@ function moveHeldTubeFromMouse(deltaX, deltaY) {
   camera.getWorldDirection(tempForward);
   tempForward.y = 0;
   tempForward.normalize();
-  const scale = Math.max(0.004, placement.distanceFromCamera * 0.0016);
+  const distance = clamp(camera.position.distanceTo(placement.position), 1, 6);
+  const scale = Math.max(0.003, distance * 0.0011);
   placement.position.addScaledVector(tempRight, deltaX * scale);
   placement.position.addScaledVector(tempForward, -deltaY * scale);
+  clampHeldTubeToRoom();
+}
+
+function moveHeldTubeFromController(axisX, axisY, deltaTime) {
+  if (!placement.active) return false;
+  if (Math.abs(axisX) + Math.abs(axisY) <= 0) return false;
+  const amount = GAMEPAD_EDIT_SPEED * deltaTime;
+  nudgeHeldTube(-axisY * amount, axisX * amount);
+  gestureLabel = 'Controller Move';
+  return true;
 }
 
 function beginHeldTubeDrag(screenX, screenY) {
@@ -971,6 +965,11 @@ function beginHeldTubeDrag(screenX, screenY) {
   dragState.planeNormal.set(0, 1, 0);
   dragPlane.setFromNormalAndCoplanarPoint(dragState.planeNormal, placement.position);
   raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  if (Math.abs(raycaster.ray.direction.dot(dragState.planeNormal)) < DRAG_PLANE_MIN_ALIGNMENT) {
+    dragState.offset.set(0, 0, 0);
+    dragState.planeReady = false;
+    return;
+  }
   if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
     dragState.offset.copy(placement.position).sub(dragPoint);
     dragState.planeReady = true;
@@ -985,12 +984,20 @@ function dragHeldTubeToPointer(screenX, screenY) {
 
   dragPlane.setFromNormalAndCoplanarPoint(dragState.planeNormal, placement.position);
   raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  if (Math.abs(raycaster.ray.direction.dot(dragState.planeNormal)) < DRAG_PLANE_MIN_ALIGNMENT) return false;
   if (!raycaster.ray.intersectPlane(dragPlane, dragPoint)) return false;
 
   const currentHeight = placement.position.y;
   placement.position.copy(dragPoint).add(dragState.offset);
   placement.position.y = placement.mode === 'plane-locked' ? 0 : currentHeight;
+  clampHeldTubeToRoom();
   return true;
+}
+
+function clampHeldTubeToRoom() {
+  placement.position.x = clamp(placement.position.x, -room.width * 0.5, room.width * 0.5);
+  placement.position.z = clamp(placement.position.z, -room.depth * 0.5, room.depth * 0.5);
+  placement.position.y = clamp(placement.position.y, 0, room.height);
 }
 
 function nudgeHeldTube(forwardAmount = 0, rightAmount = 0, y = 0) {
@@ -999,10 +1006,15 @@ function nudgeHeldTube(forwardAmount = 0, rightAmount = 0, y = 0) {
   tempRight.set(Math.cos(yaw), 0, -Math.sin(yaw)).normalize();
   placement.position.addScaledVector(tempForward, forwardAmount);
   placement.position.addScaledVector(tempRight, rightAmount);
-  placement.position.x = clamp(placement.position.x, -room.width * 0.5, room.width * 0.5);
-  placement.position.z = clamp(placement.position.z, -room.depth * 0.5, room.depth * 0.5);
-  placement.position.y = clamp(placement.position.y + y, 0, room.height);
+  placement.position.y += y;
+  clampHeldTubeToRoom();
   gestureLabel = 'Arrow Nudge';
+}
+
+function pickHeldTube(screenX, screenY) {
+  if (!placement.active || !heldTube.visible) return false;
+  raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  return raycaster.intersectObjects(heldTube.children, true).length > 0;
 }
 
 function lookFromDelta(deltaX, deltaY, speed = LOOK_SPEED) {
@@ -1050,6 +1062,7 @@ function updatePlacement() {
     return;
   }
 
+  clampHeldTubeToRoom();
   placement.projectedPoint.copy(placement.position);
   placement.projectedPoint.y = getSceneSurfaceHeightAt(placement.position.x, placement.position.z);
   placement.planeDistance = placement.position.y - placement.projectedPoint.y;
@@ -1066,6 +1079,7 @@ function updatePlacement() {
     placement.magneticActive = true;
   }
 
+  clampHeldTubeToRoom();
   placement.projectedPoint.y = getSceneSurfaceHeightAt(placement.position.x, placement.position.z);
   placement.planeDistance = placement.position.y - placement.projectedPoint.y;
   placement.heightOffset = clamp(placement.position.y, -2, 4);
@@ -1090,7 +1104,6 @@ function updatePlacement() {
     }
   });
 
-  syncDistanceFromCamera();
   syncSliders();
 }
 
@@ -1104,7 +1117,6 @@ function updateHud() {
   document.querySelector('#lockCursor').textContent = pointerLocked ? 'Unlock' : 'Lock';
   document.querySelector('#statusValue').textContent = getStatusLabel(pointerLocked);
   document.querySelector('#modeValue').textContent = modeLabels[placement.mode];
-  document.querySelector('#distanceValue').textContent = `${placement.distanceFromCamera.toFixed(1)} m`;
   document.querySelector('#heightValue').textContent = `${(objectSelected ? selectedSceneObject.group.position.y : placement.planeDistance).toFixed(1)} m`;
   document.querySelector('#axisValue').textContent = getAxisLabel();
   document.querySelector('#snapValue').textContent = objectSelected ? selectedSceneObject.label : placement.magneticActive ? 'Magnetic active' : 'Idle';
@@ -1231,13 +1243,11 @@ function updatePinchState() {
     return;
   }
 
-  const distanceDelta = distance - pinchState.distance;
   const centerDelta = centerY - pinchState.centerY;
   let angleDelta = angle - pinchState.angle;
   if (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
   if (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
 
-  dispatch({ type: 'ADJUST_DISTANCE', delta: distanceDelta * 0.01 });
   dispatch({ type: 'ADJUST_HEIGHT', delta: -centerDelta * 0.006 });
   if (placement.active) rotateHeldTube(angleDelta);
   pinchState.distance = distance;
@@ -1267,30 +1277,42 @@ function updateGamepad(deltaTime) {
   camera.position.addScaledVector(tempRight, leftX * moveSpeed);
   camera.position.addScaledVector(tempForward, -leftY * moveSpeed);
 
-  if (placement.active) {
-    moveHeldTubeFromMouse(rightX * 12, rightY * 12);
-    if (Math.abs(rightX) + Math.abs(rightY) > 0) gestureLabel = 'Controller Move';
-  } else if (selectedSceneObject) {
-    moveSelectedSceneObjectFromMouse(rightX * 12, rightY * 12);
-    if (Math.abs(rightX) + Math.abs(rightY) > 0) gestureLabel = 'Controller Object';
+  const leftTrigger = pad.buttons[6]?.value ?? 0;
+  const rightTrigger = pad.buttons[7]?.value ?? 0;
+  const hasEditableTarget = placement.active || selectedSceneObject;
+  const editMoveHeld = hasEditableTarget && leftTrigger > GAMEPAD_DEADZONE;
+  const editHeightHeld = hasEditableTarget && rightTrigger > GAMEPAD_DEADZONE;
+
+  if (editMoveHeld) {
+    if (placement.active) {
+      moveHeldTubeFromController(rightX, rightY, deltaTime);
+    } else if (selectedSceneObject && Math.abs(rightX) + Math.abs(rightY) > 0) {
+      const amount = GAMEPAD_EDIT_SPEED * deltaTime;
+      nudgeSelectedSceneObject(-rightY * amount, rightX * amount);
+      gestureLabel = 'Controller Object';
+    }
+  } else if (editHeightHeld) {
+    const heightDelta = -rightY * GAMEPAD_EDIT_SPEED * deltaTime;
+    if (Math.abs(rightY) > GAMEPAD_DEADZONE) {
+      if (placement.active) {
+        dispatch({ type: 'ADJUST_HEIGHT', delta: heightDelta });
+        gestureLabel = 'Controller Height';
+      } else if (selectedSceneObject) {
+        nudgeSelectedSceneObject(0, 0, heightDelta);
+      }
+    }
   } else {
     lookFromDelta(rightX * 12, rightY * 12, LOOK_SPEED * 1.25);
   }
 
-  const leftTrigger = pad.buttons[6]?.value ?? 0;
-  const rightTrigger = pad.buttons[7]?.value ?? 0;
   if (placement.active) {
-    if (rightTrigger > GAMEPAD_DEADZONE) dispatch({ type: 'ADJUST_DISTANCE', delta: rightTrigger * 0.035 });
-    if (leftTrigger > GAMEPAD_DEADZONE) dispatch({ type: 'ADJUST_HEIGHT', delta: leftTrigger * 0.025 });
-    if (pad.buttons[12]?.pressed) dispatch({ type: 'ADJUST_DISTANCE', delta: 0.045 });
-    if (pad.buttons[13]?.pressed) dispatch({ type: 'ADJUST_DISTANCE', delta: -0.045 });
-    if (pad.buttons[14]?.pressed) dispatch({ type: 'ADJUST_HEIGHT', delta: -0.035 });
-    if (pad.buttons[15]?.pressed) dispatch({ type: 'ADJUST_HEIGHT', delta: 0.035 });
+    if (pad.buttons[12]?.pressed) nudgeHeldTube(0.035, 0);
+    if (pad.buttons[13]?.pressed) nudgeHeldTube(-0.035, 0);
+    if (pad.buttons[14]?.pressed) nudgeHeldTube(0, -0.035);
+    if (pad.buttons[15]?.pressed) nudgeHeldTube(0, 0.035);
     if (pad.buttons[4]?.pressed) dispatch({ type: 'ROTATE', delta: -0.04 });
     if (pad.buttons[5]?.pressed) dispatch({ type: 'ROTATE', delta: 0.04 });
   } else if (selectedSceneObject) {
-    if (rightTrigger > GAMEPAD_DEADZONE) nudgeSelectedSceneObject(0, 0, rightTrigger * 0.025);
-    if (leftTrigger > GAMEPAD_DEADZONE) nudgeSelectedSceneObject(0, 0, -leftTrigger * 0.025);
     if (pad.buttons[12]?.pressed) nudgeSelectedSceneObject(0.035, 0);
     if (pad.buttons[13]?.pressed) nudgeSelectedSceneObject(-0.035, 0);
     if (pad.buttons[14]?.pressed) nudgeSelectedSceneObject(0, -0.035);
@@ -1339,13 +1361,7 @@ function formatVec(v) {
   return `${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}`;
 }
 
-function syncDistanceFromCamera() {
-  if (!placement.active) return;
-  placement.distanceFromCamera = clamp(camera.position.distanceTo(placement.position), 1, 12);
-}
-
 function syncSliders() {
-  document.querySelector('#distanceSlider').value = placement.distanceFromCamera;
   document.querySelector('#heightSlider').value = placement.heightOffset;
 }
 
@@ -1544,6 +1560,13 @@ canvas.addEventListener('pointerdown', (event) => {
     const handlePicked = placement.active && primaryPointer
       ? pickHeightHandle(event.clientX, event.clientY)
       : false;
+    const heldTubePicked = placement.active && primaryPointer
+      ? pickHeldTube(event.clientX, event.clientY)
+      : false;
+    const selectedObjectPicked = !placement.active && selectedSceneObject && primaryPointer
+      ? pickSceneObject(event.clientX, event.clientY) === selectedSceneObject
+      : false;
+    const touchLookZone = event.pointerType === 'touch' && event.clientX > window.innerWidth * 0.46;
     dragState.active = true;
     dragState.pointerId = event.pointerId;
     dragState.pointerType = event.pointerType;
@@ -1552,9 +1575,13 @@ canvas.addEventListener('pointerdown', (event) => {
       ? 'height'
       : event.pointerType === 'mouse' && event.button === 2
         ? 'look'
-        : !placement.active && selectedSceneObject && primaryPointer
+        : touchLookZone && !heldTubePicked && !selectedObjectPicked
+          ? 'look'
+          : !placement.active && selectedObjectPicked
           ? 'object'
-          : 'primary';
+          : placement.active && (heldTubePicked || event.pointerType === 'mouse')
+            ? 'primary'
+            : 'look';
     dragState.startX = event.clientX;
     dragState.startY = event.clientY;
     dragState.lastX = event.clientX;
@@ -1602,10 +1629,12 @@ canvas.addEventListener('pointermove', (event) => {
     }
 
     if (dragState.mode === 'look') {
-      lookFromDelta(deltaX, deltaY);
+      lookFromDelta(deltaX, deltaY, event.pointerType === 'touch' ? TOUCH_LOOK_SPEED : LOOK_SPEED);
       gestureLabel = 'Right Look';
       return;
     }
+
+    if (dragState.mode !== 'primary') return;
 
     if (!dragHeldTubeToPointer(event.clientX, event.clientY)) {
       moveHeldTubeFromMouse(deltaX, deltaY);
@@ -1707,15 +1736,10 @@ document.addEventListener('click', handleDuplicateCommandEvent, true);
 document.querySelector('#rotateLeft').addEventListener('click', () => dispatch({ type: 'ROTATE', delta: -Math.PI / 18 }));
 document.querySelector('#rotateRight').addEventListener('click', () => dispatch({ type: 'ROTATE', delta: Math.PI / 18 }));
 document.querySelector('#cycleAxis').addEventListener('click', () => dispatch({ type: 'CYCLE_ROTATION_AXIS' }));
-document.querySelector('#distanceDown').addEventListener('click', () => dispatch({ type: 'ADJUST_DISTANCE', delta: -0.25 }));
-document.querySelector('#distanceUp').addEventListener('click', () => dispatch({ type: 'ADJUST_DISTANCE', delta: 0.25 }));
 document.querySelector('#heightDown').addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: -0.15 }));
 document.querySelector('#heightUp').addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: 0.15 }));
 document.querySelectorAll('[data-mode]').forEach((button) => {
   button.addEventListener('click', () => dispatch({ type: 'SET_MODE', mode: button.dataset.mode }));
-});
-document.querySelector('#distanceSlider').addEventListener('input', (event) => {
-  dispatch({ type: 'SET_DISTANCE', value: Number(event.target.value) });
 });
 document.querySelector('#heightSlider').addEventListener('input', (event) => {
   dispatch({ type: 'SET_HEIGHT', value: Number(event.target.value) });

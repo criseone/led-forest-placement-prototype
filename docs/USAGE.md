@@ -31,14 +31,18 @@ Keyboard and mouse:
 Mobile:
 
 - Use the touch navigation pad for basic camera movement.
-- Single-touch drag looks or moves the active object depending on mode.
-- Multitouch gestures are experimental.
+- Drag on the right side of the scene to look around, even while building.
+- Drag the active tube/object itself to move it on the X/Z plane.
+- Drag the vertical tube handle to adjust height.
+- Two-finger vertical movement adjusts height, and twist rotates the active tube.
 
 Controller:
 
 - Xbox-style controller mappings are included for early testing.
 - Left stick moves the camera.
-- Right stick moves an active fixture/object or looks around when nothing is active.
+- Right stick looks around by default.
+- Hold `LT` and use the right stick to move the active tube/object on X/Z.
+- Hold `RT` and use the right stick vertically to adjust height.
 
 ## Placing LED Tubes
 
@@ -53,7 +57,7 @@ Tube behavior:
 
 Controls:
 
-- Left-drag: move the active tube on the X/Z plane.
+- Left-drag the active tube: move it on the X/Z plane.
 - Height handle: drag the vertical arrow handle beside the tube to adjust height.
 - Arrow keys: nudge relative to the camera angle.
 - `Shift` + arrow keys: 10 cm nudges.
@@ -104,7 +108,7 @@ Scene object controls:
 
 - Click object: select.
 - Click selected object again or click empty space: release.
-- Left-drag: move object on X/Z plane.
+- Left-drag the selected object body: move object on X/Z plane.
 - Arrow keys: nudge relative to camera angle.
 - `PageUp` / `PageDown`: raise/lower object.
 - `Q` / `E`: rotate object around vertical axis.

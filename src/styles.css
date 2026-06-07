@@ -609,7 +609,7 @@ body:not(.is-placing):not(.has-selection) .control-dock {
   }
 
   .control-dock.fine-open {
-    width: min(320px, calc(100vw - var(--safe-left) - var(--safe-right) - 20px));
+    width: min(258px, calc(100vw - var(--safe-left) - var(--safe-right) - 150px));
   }
 
   .fine-controls {

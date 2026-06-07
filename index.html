@@ -39,10 +39,6 @@
           <strong id="modeValue">Magnetic Plane</strong>
         </div>
         <div class="hud-row hud-meter">
-          <span>Distance</span>
-          <strong id="distanceValue">5.2 m</strong>
-        </div>
-        <div class="hud-row hud-meter">
           <span>Height</span>
           <strong id="heightValue">0.0 m</strong>
         </div>
@@ -70,10 +66,10 @@
           <div id="positionValue">Position 0.00, 0.00, 0.00</div>
           <div id="planeValue">Surface distance 0.00 m</div>
           <div id="gamepadValue">Gamepad not connected</div>
-          <div>Mouse L place/pick · R look · M copy</div>
-          <div>Arrows move held tube relative to camera · Shift 10 cm · Alt 1 cm</div>
+          <div>Mouse R / lock looks · L click places/picks · L drag held tube moves X/Z</div>
+          <div>Arrows nudge held tube/object relative to camera · Shift 10 cm · Alt 1 cm</div>
           <div>Scene object arrows move · Page raises · Q/E rotate · V duplicate · Delete removes</div>
-          <div>Xbox LS move · RS look/move · A place · X copy</div>
+          <div>Xbox LS moves camera · RS looks · hold LT to move edit target · hold RT for height</div>
         </div>
       </details>
 
@@ -136,13 +132,6 @@
 
         <div id="fineControls" class="fine-controls">
           <div class="control-group sliders">
-            <label>
-              <span>Distance</span>
-              <button id="distanceDown" aria-label="Decrease distance">-</button>
-              <input id="distanceSlider" type="range" min="1" max="10" step="0.05" value="5.2" />
-              <button id="distanceUp" aria-label="Increase distance">+</button>
-            </label>
-
             <label>
               <span>Height</span>
               <button id="heightDown" aria-label="Decrease height">-</button>
