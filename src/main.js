@@ -835,10 +835,16 @@ function dispatch(action) {
       placement.mode = placement.mode === 'plane-locked' ? 'magnetic-plane' : 'plane-locked';
       break;
     case 'CONFIRM_PLACE':
-      releaseHeldTube();
+      if (placement.active) releaseHeldTube();
+      else if (selectedSceneObject) deselectSceneObject();
+      else startNewTube();
       break;
     case 'CANCEL_PLACE':
-      cancelPlacement();
+      if (selectedSceneObject && !placement.active) {
+        deselectSceneObject();
+      } else {
+        cancelPlacement();
+      }
       break;
     case 'DUPLICATE_SELECTED':
       if (!placement.active && selectedSceneObject) duplicateSelectedSceneObject();
@@ -1093,7 +1099,9 @@ function updateHud() {
   const objectSelected = selectedSceneObject && !placement.active;
   const hudPosition = objectSelected ? selectedSceneObject.group.position : placement.position;
   document.body.classList.toggle('pointer-locked', pointerLocked);
-  document.querySelector('#lockCursor').textContent = pointerLocked ? 'Unlock Cursor' : 'Lock Cursor';
+  document.body.classList.toggle('is-placing', placement.active);
+  document.body.classList.toggle('has-selection', objectSelected);
+  document.querySelector('#lockCursor').textContent = pointerLocked ? 'Unlock' : 'Lock';
   document.querySelector('#statusValue').textContent = getStatusLabel(pointerLocked);
   document.querySelector('#modeValue').textContent = modeLabels[placement.mode];
   document.querySelector('#distanceValue').textContent = `${placement.distanceFromCamera.toFixed(1)} m`;
@@ -1110,6 +1118,7 @@ function updateHud() {
   document.querySelector('#selectedObjectValue').textContent = selectedSceneObject
     ? `${selectedSceneObject.label} selected`
     : 'No scene object selected';
+  document.querySelector('#place').textContent = objectSelected ? 'Done' : 'Place';
 
   document.querySelectorAll('[data-mode]').forEach((button) => {
     button.classList.toggle('active', button.dataset.mode === placement.mode);
@@ -1117,9 +1126,9 @@ function updateHud() {
 }
 
 function getStatusLabel(pointerLocked) {
-  if (placement.active) return pointerLocked ? 'Holding Tube' : 'Holding Tube / Cursor Free';
-  if (selectedSceneObject) return pointerLocked ? 'Object Selected' : 'Object Selected / Cursor Free';
-  return pointerLocked ? 'Scene Navigation' : 'Cursor Free';
+  if (placement.active) return pointerLocked ? 'Tube / Lock' : 'Holding Tube';
+  if (selectedSceneObject) return pointerLocked ? 'Object / Lock' : 'Object Selected';
+  return pointerLocked ? 'Navigation' : 'Free';
 }
 
 function getAxisLabel() {
@@ -1367,6 +1376,49 @@ function setRoomDimension(key, value) {
   syncRoomInputs();
   syncSceneInputs();
 }
+
+const overlayPanels = [...document.querySelectorAll('.room-panel, .scene-panel, .debug')];
+let overlayPanelSyncing = false;
+
+function closeOverlayPanels(exceptPanel = null) {
+  overlayPanels.forEach((panel) => {
+    if (panel !== exceptPanel) panel.open = false;
+  });
+}
+
+overlayPanels.forEach((panel) => {
+  panel.addEventListener('toggle', () => {
+    if (overlayPanelSyncing || !panel.open) return;
+    overlayPanelSyncing = true;
+    closeOverlayPanels(panel);
+    overlayPanelSyncing = false;
+  });
+});
+
+document.querySelectorAll('[data-panel-toggle]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const panel = document.querySelector(`.${button.dataset.panelToggle}`);
+    if (!panel) return;
+    const shouldOpen = !panel.open;
+    overlayPanelSyncing = true;
+    closeOverlayPanels(panel);
+    panel.open = shouldOpen;
+    overlayPanelSyncing = false;
+  });
+});
+
+const controlDock = document.querySelector('.control-dock');
+const fineControlsButton = document.querySelector('#toggleFineControls');
+
+function setFineControlsOpen(open) {
+  controlDock.classList.toggle('fine-open', open);
+  fineControlsButton.setAttribute('aria-expanded', String(open));
+  fineControlsButton.textContent = open ? 'Hide' : 'Tune';
+}
+
+fineControlsButton.addEventListener('click', () => {
+  setFineControlsOpen(!controlDock.classList.contains('fine-open'));
+});
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

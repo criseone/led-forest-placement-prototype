@@ -10,13 +10,18 @@
       <canvas id="scene"></canvas>
 
       <div class="topbar">
-        <div>
-          <h1>LED Forest 3D Placement</h1>
-          <p>Hold, aim, float, magnetize, place</p>
+        <div class="brand-lockup">
+          <h1>LED Forest</h1>
+          <p>3D Placement</p>
         </div>
         <div class="top-actions">
-          <button id="lockCursor">Lock Cursor</button>
-          <button id="startPlacement" class="primary">New Tube</button>
+          <button id="startPlacement" class="primary">
+            <span class="button-icon">+</span>
+            <span class="button-label">Tube</span>
+          </button>
+          <button data-panel-toggle="room-panel">Room</button>
+          <button data-panel-toggle="scene-panel">Scene</button>
+          <button id="lockCursor">Lock</button>
         </div>
       </div>
 
@@ -33,19 +38,19 @@
           <span>Mode</span>
           <strong id="modeValue">Magnetic Plane</strong>
         </div>
-        <div class="hud-row">
+        <div class="hud-row hud-meter">
           <span>Distance</span>
           <strong id="distanceValue">5.2 m</strong>
         </div>
-        <div class="hud-row">
+        <div class="hud-row hud-meter">
           <span>Height</span>
           <strong id="heightValue">0.0 m</strong>
         </div>
-        <div class="hud-row">
+        <div class="hud-row hud-secondary">
           <span>Rotation Axis</span>
           <strong id="axisValue">View Inferred Z</strong>
         </div>
-        <div class="hud-row">
+        <div class="hud-row hud-secondary">
           <span>Snap</span>
           <strong id="snapValue">Idle</strong>
         </div>
@@ -53,23 +58,26 @@
           <span>Gesture</span>
           <strong id="gestureValue">Idle</strong>
         </div>
-        <div class="hud-row">
+        <div class="hud-row controller-row">
           <span>Controller</span>
           <strong id="controllerValue">Press A to connect</strong>
         </div>
       </section>
 
-      <section class="debug">
-        <div id="positionValue">Position 0.00, 0.00, 0.00</div>
-        <div id="planeValue">Surface distance 0.00 m</div>
-        <div id="gamepadValue">Gamepad not connected</div>
-        <div>Mouse L place/pick · R look · M copy</div>
-        <div>Arrows move held tube relative to camera · Shift 10 cm · Alt 1 cm</div>
-        <div>Scene object arrows move · Page raises · Q/E rotate · V duplicate · Delete removes</div>
-        <div>Xbox LS move · RS look/move · A place · X copy</div>
-      </section>
+      <details class="debug">
+        <summary>Input</summary>
+        <div class="debug-body">
+          <div id="positionValue">Position 0.00, 0.00, 0.00</div>
+          <div id="planeValue">Surface distance 0.00 m</div>
+          <div id="gamepadValue">Gamepad not connected</div>
+          <div>Mouse L place/pick · R look · M copy</div>
+          <div>Arrows move held tube relative to camera · Shift 10 cm · Alt 1 cm</div>
+          <div>Scene object arrows move · Page raises · Q/E rotate · V duplicate · Delete removes</div>
+          <div>Xbox LS move · RS look/move · A place · X copy</div>
+        </div>
+      </details>
 
-      <details class="room-panel" open>
+      <details class="room-panel">
         <summary id="roomSummary">Room 5.0 x 5.0 x 3.0 m</summary>
         <label>
           <span>Width</span>
@@ -89,7 +97,7 @@
         <div class="room-note">Grid 0.10 m · major lines 1 m</div>
       </details>
 
-      <details class="scene-panel" open>
+      <details class="scene-panel">
         <summary id="sceneSummary">Scene flat · 0 objects</summary>
         <label class="toggle-row">
           <span>Terrain</span>
@@ -110,38 +118,44 @@
       </details>
 
       <section class="control-dock" aria-label="Placement controls">
-        <div class="control-group mode-group" aria-label="Placement mode">
-          <button data-mode="free">Free</button>
-          <button data-mode="magnetic-plane" class="active">Magnetic</button>
-          <button data-mode="plane-locked">Plane</button>
+        <div class="dock-strip">
+          <div class="control-group mode-group" aria-label="Placement mode">
+            <button data-mode="free">Free</button>
+            <button data-mode="magnetic-plane" class="active">Mag</button>
+            <button data-mode="plane-locked">Plane</button>
+          </div>
+
+          <div class="control-group commit-group" aria-label="Commit controls">
+            <button id="duplicate">Copy</button>
+            <button id="cancel">Drop</button>
+            <button id="place" class="primary">Place</button>
+          </div>
+
+          <button id="toggleFineControls" class="dock-toggle" aria-expanded="false" aria-controls="fineControls">Tune</button>
         </div>
 
-        <div class="control-group sliders">
-          <label>
-            <span>Distance</span>
-            <button id="distanceDown" aria-label="Decrease distance">-</button>
-            <input id="distanceSlider" type="range" min="1" max="10" step="0.05" value="5.2" />
-            <button id="distanceUp" aria-label="Increase distance">+</button>
-          </label>
+        <div id="fineControls" class="fine-controls">
+          <div class="control-group sliders">
+            <label>
+              <span>Distance</span>
+              <button id="distanceDown" aria-label="Decrease distance">-</button>
+              <input id="distanceSlider" type="range" min="1" max="10" step="0.05" value="5.2" />
+              <button id="distanceUp" aria-label="Increase distance">+</button>
+            </label>
 
-          <label>
-            <span>Height</span>
-            <button id="heightDown" aria-label="Decrease height">-</button>
-            <input id="heightSlider" type="range" min="-2" max="4" step="0.05" value="0" />
-            <button id="heightUp" aria-label="Increase height">+</button>
-          </label>
-        </div>
+            <label>
+              <span>Height</span>
+              <button id="heightDown" aria-label="Decrease height">-</button>
+              <input id="heightSlider" type="range" min="-2" max="4" step="0.05" value="0" />
+              <button id="heightUp" aria-label="Increase height">+</button>
+            </label>
+          </div>
 
-        <div class="control-group rotation-group" aria-label="Rotation controls">
-          <button id="rotateLeft" aria-label="Rotate left">-15 deg</button>
-          <button id="rotateRight" aria-label="Rotate right">+15 deg</button>
-          <button id="cycleAxis">Axis</button>
-        </div>
-
-        <div class="control-group commit-group" aria-label="Commit controls">
-          <button id="duplicate">Duplicate</button>
-          <button id="cancel">Cancel</button>
-          <button id="place" class="primary">Place</button>
+          <div class="control-group rotation-group" aria-label="Rotation controls">
+            <button id="rotateLeft" aria-label="Rotate left">-15 deg</button>
+            <button id="rotateRight" aria-label="Rotate right">+15 deg</button>
+            <button id="cycleAxis">Axis</button>
+          </div>
         </div>
       </section>
 
