@@ -1176,7 +1176,11 @@ function applyDeadzone(value) {
 }
 
 function requestScenePointerLock() {
-  if (!document.pointerLockEnabled || document.pointerLockElement === canvas) return;
+  if (document.pointerLockElement === canvas) return;
+  if (typeof canvas.requestPointerLock !== 'function') {
+    pointerLockNotice = 'Pointer lock unsupported';
+    return;
+  }
 
   try {
     const lockResult = canvas.requestPointerLock();
@@ -1462,6 +1466,8 @@ window.addEventListener('gamepaddisconnected', () => {
 canvas.addEventListener('pointerdown', (event) => {
   event.preventDefault();
 
+  if (document.pointerLockElement === canvas) return;
+
   if (event.pointerType === 'mouse' && event.button === 1) {
     if (!placement.active && selectedSceneObject) {
       duplicateSelectedSceneObject();
@@ -1607,18 +1613,7 @@ canvas.addEventListener('pointercancel', (event) => {
 
 window.addEventListener('mousemove', (event) => {
   if (document.pointerLockElement !== canvas) return;
-
-  if (placement.active) {
-    moveHeldTubeFromMouse(event.movementX, event.movementY);
-    return;
-  }
-
-  if (selectedSceneObject) {
-    moveSelectedSceneObjectFromMouse(event.movementX, event.movementY);
-    gestureLabel = 'Move Object';
-    return;
-  }
-
+  gestureLabel = 'Mouse Look';
   lookFromDelta(event.movementX, event.movementY);
 });
 
