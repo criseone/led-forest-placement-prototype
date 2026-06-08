@@ -21,13 +21,18 @@
           </button>
           <button data-panel-toggle="room-panel">Room</button>
           <button data-panel-toggle="scene-panel">Scene</button>
-          <button id="lockCursor">Lock</button>
+          <button id="lockCursor">Immersive</button>
+          <button id="toggleGuide" class="icon-action" aria-label="Toggle helper" aria-pressed="false">H</button>
         </div>
       </div>
 
       <div class="reticle" aria-hidden="true">
         <span></span>
       </div>
+
+      <div id="hoverPrompt" class="hover-prompt" hidden>E Pick</div>
+
+      <div id="starterHint" class="starter-hint">Press I for Immersive · H for helper · N for tube</div>
 
       <section class="hud" aria-live="polite">
         <div class="hud-row hud-status">
@@ -60,15 +65,28 @@
         </div>
       </section>
 
+      <section id="guideHelper" class="guide-helper" aria-live="polite" hidden>
+        <div class="guide-avatar" aria-hidden="true">
+          <span></span>
+        </div>
+        <div class="guide-copy">
+          <div class="guide-title">Helper</div>
+          <div id="guideText">Press I for Immersive, H for helper, or N to add a tube.</div>
+        </div>
+      </section>
+
       <details class="debug">
         <summary>Input</summary>
         <div class="debug-body">
           <div id="positionValue">Position 0.00, 0.00, 0.00</div>
           <div id="planeValue">Surface distance 0.00 m</div>
           <div id="gamepadValue">Gamepad not connected</div>
-          <div>Mouse R / lock looks · L click places/picks · L drag held tube moves X/Z</div>
+          <div>I toggles Immersive · Mouse R / Immersive looks · L click places/picks</div>
+          <div>Immersive active target: right mouse drag adjusts height</div>
+          <div>E picks hovered targets or releases the active target · N creates a tube</div>
+          <div>Immersive carries held tube/object at the center reticle · click to release/place</div>
           <div>Arrows nudge held tube/object relative to camera · Shift 10 cm · Alt 1 cm</div>
-          <div>Scene object arrows move · Page raises · Q/E rotate · V duplicate · Delete removes</div>
+          <div>Scene object arrows move · Page raises · Q/R rotate · V duplicate · Delete removes</div>
           <div>Xbox LS moves camera · RS looks · hold LT to move edit target · hold RT for height</div>
         </div>
       </details>

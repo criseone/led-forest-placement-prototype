@@ -17,6 +17,9 @@ const DRAG_TAP_THRESHOLD = 8;
 const DRAG_PLANE_MIN_ALIGNMENT = 0.08;
 const GAMEPAD_DEADZONE = 0.18;
 const GAMEPAD_EDIT_SPEED = 1.15;
+const HUD_UPDATE_INTERVAL = 1 / 12;
+const IMMERSIVE_HEIGHT_SPEED = 0.006;
+const STARTER_HINT_DURATION = 7000;
 
 const canvas = document.querySelector('#scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -101,14 +104,69 @@ const tempUp = new THREE.Vector3();
 const tempForward = new THREE.Vector3();
 const tempAxis = new THREE.Vector3();
 const tempSpawnPoint = new THREE.Vector3();
+const tempMatrix = new THREE.Matrix4();
+const tempPixelColor = new THREE.Color();
+const selectableTubeHits = [];
+const selectableObjectHits = [];
+const sceneObjectPickTargets = [];
 const dragPlane = new THREE.Plane();
 const dragPoint = new THREE.Vector3();
 const dragOffset = new THREE.Vector3();
 const clock = new THREE.Clock();
 
+const ui = {
+  lockCursor: document.querySelector('#lockCursor'),
+  toggleGuide: document.querySelector('#toggleGuide'),
+  guideHelper: document.querySelector('#guideHelper'),
+  guideText: document.querySelector('#guideText'),
+  hoverPrompt: document.querySelector('#hoverPrompt'),
+  starterHint: document.querySelector('#starterHint'),
+  statusValue: document.querySelector('#statusValue'),
+  modeValue: document.querySelector('#modeValue'),
+  heightValue: document.querySelector('#heightValue'),
+  axisValue: document.querySelector('#axisValue'),
+  snapValue: document.querySelector('#snapValue'),
+  gestureValue: document.querySelector('#gestureValue'),
+  controllerValue: document.querySelector('#controllerValue'),
+  positionValue: document.querySelector('#positionValue'),
+  planeValue: document.querySelector('#planeValue'),
+  gamepadValue: document.querySelector('#gamepadValue'),
+  selectedObjectValue: document.querySelector('#selectedObjectValue'),
+  place: document.querySelector('#place'),
+  startPlacement: document.querySelector('#startPlacement'),
+  cancel: document.querySelector('#cancel'),
+  duplicate: document.querySelector('#duplicate'),
+  rotateLeft: document.querySelector('#rotateLeft'),
+  rotateRight: document.querySelector('#rotateRight'),
+  cycleAxis: document.querySelector('#cycleAxis'),
+  heightDown: document.querySelector('#heightDown'),
+  heightUp: document.querySelector('#heightUp'),
+  heightSlider: document.querySelector('#heightSlider'),
+  roomWidth: document.querySelector('#roomWidth'),
+  roomDepth: document.querySelector('#roomDepth'),
+  roomHeight: document.querySelector('#roomHeight'),
+  roomSummary: document.querySelector('#roomSummary'),
+  terrainToggle: document.querySelector('#terrainToggle'),
+  terrainState: document.querySelector('#terrainState'),
+  objectCount: document.querySelector('#objectCount'),
+  sceneSummary: document.querySelector('#sceneSummary'),
+  duplicateObject: document.querySelector('#duplicateObject'),
+  clearObjects: document.querySelector('#clearObjects'),
+  importModel: document.querySelector('#importModel'),
+  modelInput: document.querySelector('#modelInput'),
+  controlDock: document.querySelector('.control-dock'),
+  fineControlsButton: document.querySelector('#toggleFineControls'),
+  modeButtons: [...document.querySelectorAll('[data-mode]')],
+  overlayPanels: [...document.querySelectorAll('.room-panel, .scene-panel, .debug')],
+  panelToggleButtons: [...document.querySelectorAll('[data-panel-toggle]')],
+  addObjectButtons: [...document.querySelectorAll('[data-add-object]')],
+  touchMoveButtons: [...document.querySelectorAll('[data-touch-move]')]
+};
+
 const sceneObjects = [];
 let sceneObjectId = 0;
 let selectedSceneObject = null;
+let selectedObjectHelperDirty = false;
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -133,8 +191,11 @@ footprint.rotation.x = -Math.PI / 2;
 scene.add(footprint);
 
 const lineMaterial = new THREE.LineBasicMaterial({ color: 0x8fd0ff, transparent: true, opacity: 0.9 });
-const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+const projectionLinePositions = new Float32Array(6);
+const lineGeometry = new THREE.BufferGeometry();
+lineGeometry.setAttribute('position', new THREE.BufferAttribute(projectionLinePositions, 3));
 const projectionLine = new THREE.Line(lineGeometry, lineMaterial);
+projectionLine.frustumCulled = false;
 scene.add(projectionLine);
 
 const placedGroup = new THREE.Group();
@@ -153,14 +214,18 @@ function createLineSegments(positions, color, opacity) {
 }
 
 function disposeObject(object) {
+  const geometries = new Set();
+  const materials = new Set();
   object.traverse((child) => {
-    child.geometry?.dispose();
+    if (child.geometry) geometries.add(child.geometry);
     if (Array.isArray(child.material)) {
-      child.material.forEach((material) => material.dispose());
-    } else {
-      child.material?.dispose();
+      child.material.forEach((material) => materials.add(material));
+    } else if (child.material) {
+      materials.add(child.material);
     }
   });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
 }
 
 function clearObjectGroup(group) {
@@ -169,6 +234,46 @@ function clearObjectGroup(group) {
     group.remove(child);
     disposeObject(child);
   }
+}
+
+function setText(element, value) {
+  if (element.textContent !== value) element.textContent = value;
+}
+
+function setValue(element, value) {
+  const nextValue = String(value);
+  if (element.value !== nextValue) element.value = nextValue;
+}
+
+function setChecked(element, checked) {
+  if (element.checked !== checked) element.checked = checked;
+}
+
+function isEditableElement(element) {
+  return element?.matches?.('input, textarea, select, [contenteditable="true"]') ?? false;
+}
+
+function hasActiveEditTarget() {
+  return placement.active || Boolean(selectedSceneObject);
+}
+
+function getActiveEditTargetPosition() {
+  if (placement.active) return placement.position;
+  return selectedSceneObject?.group.position ?? null;
+}
+
+function hideStarterHint() {
+  if (ui.starterHint) ui.starterHint.hidden = true;
+}
+
+function updateProjectionLine(start, end) {
+  projectionLinePositions[0] = start.x;
+  projectionLinePositions[1] = start.y;
+  projectionLinePositions[2] = start.z;
+  projectionLinePositions[3] = end.x;
+  projectionLinePositions[4] = end.y;
+  projectionLinePositions[5] = end.z;
+  lineGeometry.attributes.position.needsUpdate = true;
 }
 
 function rebuildRoomHelpers() {
@@ -312,24 +417,37 @@ function createSceneObjectMesh(type, config) {
 
 function prepareSceneObjectMeshes(group, object) {
   group.userData.sceneObject = object;
+  object.pickTargets = [];
   group.traverse((child) => {
-    child.userData.sceneObject = object;
     if (child.isMesh) {
+      child.userData.sceneObject = object;
+      object.pickTargets.push(child);
       child.castShadow = true;
       child.receiveShadow = true;
       if (!child.material) {
         child.material = new THREE.MeshStandardMaterial({ color: 0x83909a, roughness: 0.78 });
       }
+    } else {
+      delete child.userData.sceneObject;
     }
   });
 }
 
-function measureSceneObject(object) {
-  tempObjectBox.setFromObject(object.group);
-  const size = tempObjectBox.getSize(tempObjectSize);
+function updateSceneObjectBounds(object) {
+  object.bounds ??= new THREE.Box3();
+  object.bounds.setFromObject(object.group);
+  const size = object.bounds.getSize(tempObjectSize);
   object.width = Math.max(size.x, 0.05);
   object.depth = Math.max(size.z, 0.05);
   object.height = Math.max(size.y, object.height ?? 0.05);
+  object.footprint = {
+    x: Math.max(size.x * 0.5, object.radius ?? 0.03),
+    z: Math.max(size.z * 0.5, object.radius ?? 0.03)
+  };
+}
+
+function measureSceneObject(object) {
+  updateSceneObjectBounds(object);
 }
 
 function registerSceneObject(object, { select = false } = {}) {
@@ -340,6 +458,7 @@ function registerSceneObject(object, { select = false } = {}) {
   prepareSceneObjectMeshes(object.group, object);
   sceneObjectGroup.add(object.group);
   sceneObjects.push(object);
+  sceneObjectPickTargets.push(...object.pickTargets);
   measureSceneObject(object);
   clampSceneObjectToRoom(object);
   syncSceneInputs();
@@ -348,12 +467,8 @@ function registerSceneObject(object, { select = false } = {}) {
 }
 
 function getObjectFootprint(object) {
-  tempObjectBox.setFromObject(object.group);
-  const size = tempObjectBox.getSize(tempObjectSize);
-  return {
-    x: Math.max(size.x * 0.5, object.radius ?? 0.03),
-    z: Math.max(size.z * 0.5, object.radius ?? 0.03)
-  };
+  if (!object.footprint) updateSceneObjectBounds(object);
+  return object.footprint;
 }
 
 function clampSceneObjectToRoom(object) {
@@ -364,26 +479,29 @@ function clampSceneObjectToRoom(object) {
   object.group.position.z = clamp(object.group.position.z, -maxZ, maxZ);
   object.baseOffset = clamp(object.baseOffset ?? 0, 0, room.height);
   object.group.position.y = getTerrainHeightAt(object.group.position.x, object.group.position.z) + object.baseOffset;
+  updateSceneObjectBounds(object);
+  if (object === selectedSceneObject) selectedObjectHelperDirty = true;
 }
 
 function syncSceneObjectHeights() {
   sceneObjects.forEach(clampSceneObjectToRoom);
+  selectedObjectHelperDirty = true;
 }
 
 function getObjectTopAt(object, x, z) {
   if (!object.snapSurface) return null;
+  if (!object.bounds) updateSceneObjectBounds(object);
 
-  tempObjectBox.setFromObject(object.group);
   if (
-    x < tempObjectBox.min.x
-    || x > tempObjectBox.max.x
-    || z < tempObjectBox.min.z
-    || z > tempObjectBox.max.z
+    x < object.bounds.min.x
+    || x > object.bounds.max.x
+    || z < object.bounds.min.z
+    || z > object.bounds.max.z
   ) {
     return null;
   }
 
-  return tempObjectBox.max.y;
+  return object.bounds.max.y;
 }
 
 function getSceneSurfaceHeightAt(x, z) {
@@ -439,6 +557,7 @@ function addSceneObject(type) {
 function clearSceneObjects() {
   deselectSceneObject();
   sceneObjects.length = 0;
+  sceneObjectPickTargets.length = 0;
   clearObjectGroup(sceneObjectGroup);
   gestureLabel = 'Clear Objects';
   syncSceneInputs();
@@ -446,9 +565,11 @@ function clearSceneObjects() {
 
 function selectSceneObject(object) {
   if (!object) return;
+  clearHoverSelection();
   if (placement.active) cancelPlacement();
   selectedSceneObject = object;
-  selectedObjectBox.setFromObject(object.group);
+  selectedObjectHelperDirty = true;
+  updateSelectedObjectHelper();
   selectedObjectHelper.visible = true;
   gestureLabel = 'Object Selected';
   syncSceneInputs();
@@ -456,6 +577,7 @@ function selectSceneObject(object) {
 
 function deselectSceneObject() {
   selectedSceneObject = null;
+  selectedObjectHelperDirty = false;
   selectedObjectHelper.visible = false;
   syncSceneInputs();
 }
@@ -466,14 +588,16 @@ function updateSelectedObjectHelper() {
     return;
   }
 
+  if (!selectedObjectHelperDirty) return;
   selectedObjectBox.setFromObject(selectedSceneObject.group);
   selectedObjectHelper.visible = true;
   selectedObjectHelper.updateMatrixWorld(true);
+  selectedObjectHelperDirty = false;
 }
 
 function pickSceneObject(screenX = window.innerWidth / 2, screenY = window.innerHeight / 2) {
   raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
-  const intersections = raycaster.intersectObjects(sceneObjectGroup.children, true);
+  const intersections = raycaster.intersectObjects(sceneObjectPickTargets, false);
   if (intersections.length === 0) return null;
   return intersections[0].object.userData.sceneObject ?? null;
 }
@@ -537,6 +661,17 @@ function nudgeSelectedSceneObject(forwardAmount = 0, rightAmount = 0, y = 0) {
   return true;
 }
 
+function moveSelectedSceneObjectToReticle() {
+  if (!selectedSceneObject) return false;
+  const point = getReticleGroundPoint();
+  selectedSceneObject.group.position.x = point.x;
+  selectedSceneObject.group.position.z = point.z;
+  clampSceneObjectToRoom(selectedSceneObject);
+  selectedObjectHelperDirty = true;
+  gestureLabel = 'Immersive Move';
+  return true;
+}
+
 function rotateSelectedSceneObject(delta) {
   if (!selectedSceneObject) return false;
   selectedSceneObject.group.rotation.y += delta;
@@ -552,6 +687,10 @@ function removeSelectedSceneObject() {
   deselectSceneObject();
   const index = sceneObjects.indexOf(object);
   if (index >= 0) sceneObjects.splice(index, 1);
+  object.pickTargets?.forEach((target) => {
+    const pickIndex = sceneObjectPickTargets.indexOf(target);
+    if (pickIndex >= 0) sceneObjectPickTargets.splice(pickIndex, 1);
+  });
   sceneObjectGroup.remove(object.group);
   disposeObject(object.group);
   gestureLabel = 'Delete Object';
@@ -688,24 +827,29 @@ function createTubeMesh({ ghost = false } = {}) {
   group.userData.tubeRoot = group;
 
   const geometry = new THREE.BoxGeometry(PIXEL_WIDTH, PIXEL_HEIGHT, PIXEL_WIDTH);
-  for (let i = 0; i < PIXEL_COUNT; i += 1) {
-    const material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color().setHSL(0.52 + i * 0.006, 0.72, ghost ? 0.58 : 0.68),
-      emissive: new THREE.Color().setHSL(0.52 + i * 0.006, 0.74, ghost ? 0.2 : 0.13),
-      roughness: 0.48,
-      metalness: 0.12,
-      transparent: ghost,
-      opacity: ghost ? 0.58 : 1
-    });
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: new THREE.Color().setHSL(0.52, 0.72, ghost ? 0.18 : 0.12),
+    roughness: 0.48,
+    metalness: 0.12,
+    transparent: ghost,
+    opacity: ghost ? 0.58 : 1,
+    vertexColors: true
+  });
+  const pixels = new THREE.InstancedMesh(geometry, material, PIXEL_COUNT);
 
-    const pixel = new THREE.Mesh(geometry, material);
-    pixel.position.y = i * PIXEL_SPACING + PIXEL_SPACING * 0.5;
-    pixel.castShadow = true;
-    pixel.receiveShadow = true;
-    pixel.userData.tubeRoot = group;
-    group.add(pixel);
+  for (let i = 0; i < PIXEL_COUNT; i += 1) {
+    tempMatrix.makeTranslation(0, i * PIXEL_SPACING + PIXEL_SPACING * 0.5, 0);
+    pixels.setMatrixAt(i, tempMatrix);
+    pixels.setColorAt(i, tempPixelColor.setHSL(0.52 + i * 0.006, 0.72, ghost ? 0.58 : 0.68));
   }
 
+  pixels.instanceMatrix.needsUpdate = true;
+  if (pixels.instanceColor) pixels.instanceColor.needsUpdate = true;
+  pixels.castShadow = true;
+  pixels.receiveShadow = true;
+  pixels.userData.tubeRoot = group;
+  group.add(pixels);
   return group;
 }
 
@@ -718,33 +862,84 @@ function addPlacedTube(position, quaternion = new THREE.Quaternion()) {
 }
 
 const heldTube = createTubeMesh({ ghost: true });
+let heldTubeOpacity = null;
 scene.add(heldTube);
 
 function createHeightHandle() {
   const group = new THREE.Group();
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x3df6b0,
+  const createHandleMaterial = (color, opacity = 0.9) => new THREE.MeshBasicMaterial({
+    color,
     transparent: true,
-    opacity: 0.88,
+    opacity,
     depthWrite: false
   });
-  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, TUBE_LENGTH + 0.38, 10), material);
-  rail.position.set(0.28, TUBE_LENGTH * 0.5, 0);
-  const top = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), material);
-  top.position.set(0.28, TUBE_LENGTH + 0.28, 0);
-  const bottom = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), material);
-  bottom.position.set(0.28, -0.12, 0);
+  const yMaterial = createHandleMaterial(0x3df6b0, 0.9);
+  const xMaterial = createHandleMaterial(0xff6b6b, 0.88);
+  const zMaterial = createHandleMaterial(0x62a8ff, 0.88);
+  const hubMaterial = createHandleMaterial(0xeaf7f3, 0.72);
+
+  const setAxis = (object, axis) => {
+    object.userData.gizmoAxis = axis;
+    object.traverse?.((child) => {
+      child.userData.gizmoAxis = axis;
+    });
+  };
+
+  const hubX = 0.28;
+  const hubY = TUBE_LENGTH * 0.5;
+
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, TUBE_LENGTH + 0.38, 10), yMaterial);
+  rail.position.set(hubX, hubY, 0);
+  setAxis(rail, 'y');
+
+  const top = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), yMaterial);
+  top.position.set(hubX, TUBE_LENGTH + 0.28, 0);
+  setAxis(top, 'y');
+
+  const bottom = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 16), yMaterial);
+  bottom.position.set(hubX, -0.12, 0);
   bottom.rotation.z = Math.PI;
-  group.add(rail, top, bottom);
-  group.traverse((child) => {
-    child.userData.heightHandle = true;
-  });
+  setAxis(bottom, 'y');
+
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.055, 16, 12), hubMaterial);
+  hub.position.set(hubX, hubY, 0);
+  setAxis(hub, 'y');
+
+  const xRail = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 10), xMaterial);
+  xRail.position.set(hubX + 0.21, hubY, 0);
+  xRail.rotation.z = Math.PI / 2;
+  setAxis(xRail, 'x');
+
+  const xTip = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.13, 16), xMaterial);
+  xTip.position.set(hubX + 0.48, hubY, 0);
+  xTip.rotation.z = -Math.PI / 2;
+  setAxis(xTip, 'x');
+
+  const zRail = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 10), zMaterial);
+  zRail.position.set(hubX, hubY, 0.21);
+  zRail.rotation.x = Math.PI / 2;
+  setAxis(zRail, 'z');
+
+  const zTip = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.13, 16), zMaterial);
+  zTip.position.set(hubX, hubY, 0.48);
+  zTip.rotation.x = Math.PI / 2;
+  setAxis(zTip, 'z');
+
+  group.add(rail, top, bottom, hub, xRail, xTip, zRail, zTip);
   return group;
 }
 
 const heightHandle = createHeightHandle();
 heightHandle.visible = false;
 scene.add(heightHandle);
+
+function setHeldTubeOpacity(opacity) {
+  if (heldTubeOpacity === opacity) return;
+  heldTubeOpacity = opacity;
+  heldTube.traverse((child) => {
+    if (child.material) child.material.opacity = opacity;
+  });
+}
 
 const modeLabels = {
   free: 'Free',
@@ -781,8 +976,12 @@ const dragState = {
   lastY: 0,
   moved: false,
   planeReady: false,
+  gizmoAxis: null,
   planeNormal: new THREE.Vector3(),
-  offset: new THREE.Vector3()
+  offset: new THREE.Vector3(),
+  axisVector: new THREE.Vector3(),
+  startPoint: new THREE.Vector3(),
+  startPosition: new THREE.Vector3()
 };
 const pinchState = {
   active: false,
@@ -790,12 +989,24 @@ const pinchState = {
   centerY: 0,
   angle: 0
 };
-let pointerLockNotice = 'Pointer lock off';
+let pointerLockNotice = 'Editor mode';
 let gestureLabel = 'Idle';
 let controllerLabel = 'Press A to connect';
 let lastTapAt = 0;
 let lastTapX = 0;
 let lastTapY = 0;
+let hudUpdateElapsed = HUD_UPDATE_INTERVAL;
+let immersiveMode = false;
+let immersiveHeightAdjusting = false;
+let guideEnabled = false;
+let helperTooltip = '';
+const hoverSelection = {
+  type: null,
+  target: null,
+  label: '',
+  x: 0,
+  y: 0
+};
 
 function dispatch(action) {
   switch (action.type) {
@@ -865,6 +1076,7 @@ function startNewTube() {
 }
 
 function selectTube(tube) {
+  clearHoverSelection();
   deselectSceneObject();
   placement.active = true;
   placement.source = 'picked';
@@ -872,10 +1084,12 @@ function selectTube(tube) {
   heldTube.quaternion.copy(tube.quaternion);
   heldTube.visible = true;
   placedGroup.remove(tube);
+  disposeObject(tube);
   syncSliders();
 }
 
 function copyTube(tube) {
+  clearHoverSelection();
   deselectSceneObject();
   placement.active = true;
   placement.source = 'copy';
@@ -994,6 +1208,51 @@ function dragHeldTubeToPointer(screenX, screenY) {
   return true;
 }
 
+function beginGizmoAxisDrag(axis, screenX, screenY) {
+  const targetPosition = getActiveEditTargetPosition();
+  if (!targetPosition || !axis) return;
+
+  dragState.gizmoAxis = axis;
+  dragState.startPosition.copy(targetPosition);
+  if (axis === 'x') dragState.axisVector.set(1, 0, 0);
+  if (axis === 'z') dragState.axisVector.set(0, 0, 1);
+
+  camera.getWorldDirection(dragState.planeNormal);
+  dragPlane.setFromNormalAndCoplanarPoint(dragState.planeNormal, targetPosition);
+  raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
+    dragState.startPoint.copy(dragPoint);
+    dragState.planeReady = true;
+  } else {
+    dragState.planeReady = false;
+  }
+}
+
+function dragGizmoAxisToPointer(screenX, screenY) {
+  if (!hasActiveEditTarget() || !dragState.planeReady || !dragState.gizmoAxis) return false;
+
+  raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  if (!raycaster.ray.intersectPlane(dragPlane, dragPoint)) return false;
+
+  dragState.offset.copy(dragPoint).sub(dragState.startPoint);
+  const amount = dragState.offset.dot(dragState.axisVector);
+  const nextPosition = tempSpawnPoint.copy(dragState.startPosition).addScaledVector(dragState.axisVector, amount);
+
+  if (placement.active) {
+    const currentHeight = placement.position.y;
+    placement.position.copy(nextPosition);
+    placement.position.y = currentHeight;
+    clampHeldTubeToRoom();
+  } else if (selectedSceneObject) {
+    selectedSceneObject.group.position.x = nextPosition.x;
+    selectedSceneObject.group.position.z = nextPosition.z;
+    clampSceneObjectToRoom(selectedSceneObject);
+    updateSelectedObjectHelper();
+  }
+
+  return true;
+}
+
 function clampHeldTubeToRoom() {
   placement.position.x = clamp(placement.position.x, -room.width * 0.5, room.width * 0.5);
   placement.position.z = clamp(placement.position.z, -room.depth * 0.5, room.depth * 0.5);
@@ -1011,10 +1270,53 @@ function nudgeHeldTube(forwardAmount = 0, rightAmount = 0, y = 0) {
   gestureLabel = 'Arrow Nudge';
 }
 
+function adjustActiveTargetHeight(delta) {
+  if (placement.active) {
+    placement.position.y += delta;
+    clampHeldTubeToRoom();
+    syncSliders();
+    gestureLabel = 'Immersive Height';
+    return true;
+  }
+
+  if (selectedSceneObject) {
+    selectedSceneObject.baseOffset = (selectedSceneObject.baseOffset ?? 0) + delta;
+    clampSceneObjectToRoom(selectedSceneObject);
+    updateSelectedObjectHelper();
+    gestureLabel = 'Immersive Height';
+    return true;
+  }
+
+  return false;
+}
+
 function pickHeldTube(screenX, screenY) {
   if (!placement.active || !heldTube.visible) return false;
   raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
   return raycaster.intersectObjects(heldTube.children, true).length > 0;
+}
+
+function moveHeldTubeToReticle() {
+  if (!placement.active) return false;
+  const currentSurface = getSceneSurfaceHeightAt(placement.position.x, placement.position.z);
+  const heightAboveSurface = placement.position.y - currentSurface;
+  const point = getReticleGroundPoint();
+  const targetSurface = getSceneSurfaceHeightAt(point.x, point.z);
+  placement.position.x = point.x;
+  placement.position.z = point.z;
+  placement.position.y = placement.mode === 'plane-locked' ? targetSurface : targetSurface + heightAboveSurface;
+  clampHeldTubeToRoom();
+  gestureLabel = 'Immersive Move';
+  return true;
+}
+
+function updateImmersiveReticleTarget() {
+  if (document.pointerLockElement !== canvas) return;
+  if (placement.active) {
+    moveHeldTubeToReticle();
+  } else if (selectedSceneObject) {
+    moveSelectedSceneObjectToReticle();
+  }
 }
 
 function lookFromDelta(deltaX, deltaY, speed = LOOK_SPEED) {
@@ -1050,15 +1352,12 @@ function handlePrimarySceneTap(screenX, screenY, pointerType = 'mouse') {
       }
     }
   }
-
-  if (pointerType === 'mouse') requestScenePointerLock();
 }
 
 function updatePlacement() {
   if (!placement.active) {
     footprint.visible = false;
     projectionLine.visible = false;
-    heightHandle.visible = false;
     return;
   }
 
@@ -1086,8 +1385,6 @@ function updatePlacement() {
 
   heldTube.position.copy(placement.position);
   heldTube.visible = true;
-  heightHandle.position.copy(placement.position);
-  heightHandle.visible = true;
 
   footprint.position.copy(placement.projectedPoint);
   footprint.rotation.set(-Math.PI / 2, 0, 0);
@@ -1095,16 +1392,32 @@ function updatePlacement() {
   footprintMaterial.color.set(placement.magneticActive ? 0x3df6b0 : 0x77b7ff);
   footprintMaterial.opacity = placement.mode === 'plane-locked' ? 0.48 : 0.28;
 
-  projectionLine.geometry.setFromPoints([placement.position, placement.projectedPoint]);
+  updateProjectionLine(placement.position, placement.projectedPoint);
   projectionLine.visible = true;
 
-  heldTube.traverse((child) => {
-    if (child.material) {
-      child.material.opacity = placement.mode === 'plane-locked' ? 0.75 : 0.58;
-    }
-  });
+  setHeldTubeOpacity(placement.mode === 'plane-locked' ? 0.75 : 0.58);
 
   syncSliders();
+}
+
+function updateEditGizmo() {
+  if (document.pointerLockElement === canvas || !hasActiveEditTarget()) {
+    heightHandle.visible = false;
+    return;
+  }
+
+  if (placement.active) {
+    heightHandle.position.copy(placement.position);
+    heightHandle.visible = true;
+    return;
+  }
+
+  if (selectedSceneObject) {
+    const footprint = getObjectFootprint(selectedSceneObject);
+    heightHandle.position.copy(selectedSceneObject.group.position);
+    heightHandle.position.x += footprint.x;
+    heightHandle.visible = true;
+  }
 }
 
 function updateHud() {
@@ -1112,41 +1425,166 @@ function updateHud() {
   const objectSelected = selectedSceneObject && !placement.active;
   const hudPosition = objectSelected ? selectedSceneObject.group.position : placement.position;
   document.body.classList.toggle('pointer-locked', pointerLocked);
+  document.body.classList.toggle('immersive-mode', immersiveMode);
   document.body.classList.toggle('is-placing', placement.active);
   document.body.classList.toggle('has-selection', objectSelected);
-  document.querySelector('#lockCursor').textContent = pointerLocked ? 'Unlock' : 'Lock';
-  document.querySelector('#statusValue').textContent = getStatusLabel(pointerLocked);
-  document.querySelector('#modeValue').textContent = modeLabels[placement.mode];
-  document.querySelector('#heightValue').textContent = `${(objectSelected ? selectedSceneObject.group.position.y : placement.planeDistance).toFixed(1)} m`;
-  document.querySelector('#axisValue').textContent = getAxisLabel();
-  document.querySelector('#snapValue').textContent = objectSelected ? selectedSceneObject.label : placement.magneticActive ? 'Magnetic active' : 'Idle';
-  document.querySelector('#gestureValue').textContent = gestureLabel;
-  document.querySelector('#controllerValue').textContent = controllerLabel;
-  document.querySelector('#positionValue').textContent = `${objectSelected ? 'Object' : 'Position'} ${formatVec(hudPosition)}`;
-  document.querySelector('#planeValue').textContent = objectSelected
+  setText(ui.lockCursor, pointerLocked ? 'Editor' : 'Immersive');
+  setText(ui.statusValue, getStatusLabel(pointerLocked));
+  setText(ui.modeValue, modeLabels[placement.mode]);
+  setText(ui.heightValue, `${(objectSelected ? selectedSceneObject.group.position.y : placement.planeDistance).toFixed(1)} m`);
+  setText(ui.axisValue, getAxisLabel());
+  setText(ui.snapValue, objectSelected ? selectedSceneObject.label : placement.magneticActive ? 'Magnetic active' : 'Idle');
+  setText(ui.gestureValue, gestureLabel);
+  setText(ui.controllerValue, controllerLabel);
+  setText(ui.positionValue, `${objectSelected ? 'Object' : 'Position'} ${formatVec(hudPosition)}`);
+  setText(ui.planeValue, objectSelected
     ? `Object height ${selectedSceneObject.height.toFixed(2)} m`
-    : `Surface distance ${placement.planeDistance.toFixed(2)} m`;
-  document.querySelector('#gamepadValue').textContent = pointerLocked ? 'Pointer lock on' : pointerLockNotice;
-  document.querySelector('#selectedObjectValue').textContent = selectedSceneObject
+    : `Surface distance ${placement.planeDistance.toFixed(2)} m`);
+  setText(ui.gamepadValue, pointerLocked ? 'Immersive mode on' : pointerLockNotice);
+  setText(ui.selectedObjectValue, selectedSceneObject
     ? `${selectedSceneObject.label} selected`
-    : 'No scene object selected';
-  document.querySelector('#place').textContent = objectSelected ? 'Done' : 'Place';
+    : 'No scene object selected');
+  setText(ui.place, objectSelected ? 'Done' : 'Place');
+  updateGuideText(pointerLocked);
 
-  document.querySelectorAll('[data-mode]').forEach((button) => {
+  ui.modeButtons.forEach((button) => {
     button.classList.toggle('active', button.dataset.mode === placement.mode);
   });
 }
 
 function getStatusLabel(pointerLocked) {
-  if (placement.active) return pointerLocked ? 'Tube / Lock' : 'Holding Tube';
-  if (selectedSceneObject) return pointerLocked ? 'Object / Lock' : 'Object Selected';
-  return pointerLocked ? 'Navigation' : 'Free';
+  if (pointerLocked) return placement.active ? 'Immersive / Tube' : 'Immersive';
+  if (placement.active) return 'Holding Tube';
+  if (selectedSceneObject) return 'Object Selected';
+  return 'Editor';
 }
 
 function getAxisLabel() {
   if (placement.rotationAxis === 'view-x') return 'View Inferred X';
   if (placement.rotationAxis === 'view-y') return 'View Inferred Y';
   return 'View Inferred Z';
+}
+
+function getGuideMessage(pointerLocked) {
+  if (helperTooltip) return helperTooltip;
+
+  if (hoverSelection.target && !placement.active && !selectedSceneObject) {
+    return `Press E to pick up this ${hoverSelection.label}.`;
+  }
+
+  if (placement.active && pointerLocked) {
+    return 'Aim with the reticle. The tube follows X/Z; hold right mouse and move up/down for height.';
+  }
+
+  if (selectedSceneObject && pointerLocked) {
+    return 'Aim with the reticle. Hold right mouse and move up/down for height; press E or click to release.';
+  }
+
+  if (pointerLocked) {
+    return 'Immersive mode: WASD moves, mouse looks, N adds a tube at the reticle, E or click picks/places.';
+  }
+
+  if (placement.active) {
+    return 'Drag the tube for X/Z, use the height handle or PageUp/PageDown for height, Q/R or wheel to rotate.';
+  }
+
+  if (selectedSceneObject) {
+    return 'Drag the object or side gizmo, use arrows to nudge, Q/R to rotate, E or Enter to release.';
+  }
+
+  return 'Press I for Immersive, H for helper, or N to add a tube. Hover a target and press E to pick it up.';
+}
+
+function updateGuideText(pointerLocked = document.pointerLockElement === canvas) {
+  if (!guideEnabled || !ui.guideText) return;
+  setText(ui.guideText, getGuideMessage(pointerLocked));
+}
+
+function setGuideEnabled(enabled) {
+  hideStarterHint();
+  guideEnabled = enabled;
+  if (ui.guideHelper) ui.guideHelper.hidden = !enabled;
+  if (ui.toggleGuide) {
+    ui.toggleGuide.setAttribute('aria-pressed', String(enabled));
+    ui.toggleGuide.classList.toggle('active', enabled);
+  }
+  updateGuideText();
+}
+
+function setHelperTooltip(text = '') {
+  helperTooltip = text;
+  updateGuideText();
+}
+
+function setHelp(element, text) {
+  if (!element) return;
+  element.dataset.help = text;
+}
+
+function registerHelperTooltips() {
+  setHelp(ui.startPlacement, 'Add a new 150 cm LED tube. Shortcut: N. In Immersive it appears at the center reticle.');
+  setHelp(ui.lockCursor, 'Toggle Immersive mode. Shortcut: I. Immersive captures the cursor for game-style movement.');
+  setHelp(ui.toggleGuide, 'Toggle this helper overlay. Shortcut: H.');
+  setHelp(ui.place, 'Place/release the active tube or finish the selected object. Shortcut: E or Enter.');
+  setHelp(ui.cancel, 'Drop the active edit. For picked tubes, this places it back into the scene. Shortcut: Esc.');
+  setHelp(ui.duplicate, 'Copy the active tube or duplicate the selected object.');
+  setHelp(ui.fineControlsButton, 'Show or hide fine controls for height and rotation.');
+  setHelp(ui.heightSlider, 'Set tube height above the current surface. The side green handle and PageUp/PageDown do the same.');
+  setHelp(ui.heightDown, 'Lower the active tube.');
+  setHelp(ui.heightUp, 'Raise the active tube.');
+  setHelp(ui.rotateLeft, 'Rotate left. Shortcut: Q.');
+  setHelp(ui.rotateRight, 'Rotate right. Shortcut: R.');
+  setHelp(ui.cycleAxis, 'Cycle the wheel rotation axis inferred from the camera view.');
+  setHelp(ui.roomWidth, 'Room width in meters. The green boundary box and metric grid update immediately.');
+  setHelp(ui.roomDepth, 'Room depth in meters. The green boundary box and metric grid update immediately.');
+  setHelp(ui.roomHeight, 'Room height in meters. Tubes and objects are clamped inside this height.');
+  setHelp(ui.terrainToggle, 'Toggle a procedural terrain surface. Tubes can snap to it in Magnetic and Plane modes.');
+  setHelp(ui.duplicateObject, 'Duplicate the selected scene object. Shortcut: V.');
+  setHelp(ui.clearObjects, 'Remove all scene objects from the room.');
+  setHelp(ui.importModel, 'Import a GLB, GLTF, or OBJ as room/stage/furniture context.');
+
+  ui.modeButtons.forEach((button) => {
+    const modeHelp = {
+      free: 'Free mode disables surface snapping.',
+      'magnetic-plane': 'Magnetic mode gently snaps tubes to nearby terrain/object surfaces.',
+      'plane-locked': 'Plane mode locks tubes directly onto the sampled surface.'
+    };
+    setHelp(button, modeHelp[button.dataset.mode]);
+  });
+
+  ui.panelToggleButtons.forEach((button) => {
+    setHelp(button, `${button.textContent.trim()} panel: open or close related setup controls.`);
+  });
+
+  ui.addObjectButtons.forEach((button) => {
+    setHelp(button, `Add a ${button.textContent.trim()} scene object. It can be selected, moved, and used as a tube snap surface.`);
+  });
+
+  ui.touchMoveButtons.forEach((button) => {
+    setHelp(button, `Touch camera move: ${button.textContent.trim()}.`);
+  });
+
+  document.querySelectorAll('summary').forEach((summary) => {
+    setHelp(summary, `${summary.textContent.trim()} panel: click to open or close.`);
+  });
+
+  const handleHelpEnter = (event) => {
+    const target = event.target.closest?.('[data-help]');
+    if (!target) return;
+    setHelperTooltip(target.dataset.help);
+  };
+
+  const handleHelpLeave = (event) => {
+    const target = event.target.closest?.('[data-help]');
+    if (!target) return;
+    if (event.relatedTarget?.closest?.('[data-help]') === target) return;
+    setHelperTooltip('');
+  };
+
+  document.addEventListener('pointerover', handleHelpEnter);
+  document.addEventListener('mouseover', handleHelpEnter);
+  document.addEventListener('pointerout', handleHelpLeave);
+  document.addEventListener('mouseout', handleHelpLeave);
 }
 
 function updateCamera(deltaTime) {
@@ -1180,15 +1618,127 @@ function screenToNdc(screenX, screenY) {
   return pickNdc;
 }
 
+function pickSelectable(screenX = window.innerWidth / 2, screenY = window.innerHeight / 2) {
+  raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
+  selectableTubeHits.length = 0;
+  selectableObjectHits.length = 0;
+  raycaster.intersectObjects(placedGroup.children, true, selectableTubeHits);
+  raycaster.intersectObjects(sceneObjectPickTargets, false, selectableObjectHits);
+
+  const tubeHit = selectableTubeHits.find((hit) => hit.object.userData.tubeRoot);
+  const objectHit = selectableObjectHits.find((hit) => hit.object.userData.sceneObject);
+
+  if (tubeHit && (!objectHit || tubeHit.distance <= objectHit.distance)) {
+    return {
+      type: 'tube',
+      target: tubeHit.object.userData.tubeRoot,
+      label: 'Tube'
+    };
+  }
+
+  if (objectHit) {
+    const object = objectHit.object.userData.sceneObject;
+    return {
+      type: 'object',
+      target: object,
+      label: object.label
+    };
+  }
+
+  return null;
+}
+
+function clearHoverSelection() {
+  hoverSelection.type = null;
+  hoverSelection.target = null;
+  hoverSelection.label = '';
+  hoverSelection.x = 0;
+  hoverSelection.y = 0;
+  if (ui.hoverPrompt) ui.hoverPrompt.hidden = true;
+}
+
+function updateHoverSelection(screenX, screenY, pointerType = 'mouse') {
+  if (
+    pointerType === 'touch'
+    || document.pointerLockElement === canvas
+    || placement.active
+    || selectedSceneObject
+  ) {
+    clearHoverSelection();
+    return;
+  }
+
+  const selection = pickSelectable(screenX, screenY);
+  if (!selection) {
+    clearHoverSelection();
+    return;
+  }
+
+  hoverSelection.type = selection.type;
+  hoverSelection.target = selection.target;
+  hoverSelection.label = selection.label;
+  hoverSelection.x = screenX;
+  hoverSelection.y = screenY;
+  if (ui.hoverPrompt) {
+    setText(ui.hoverPrompt, `E Pick ${selection.label}`);
+    ui.hoverPrompt.style.transform = `translate(${Math.round(screenX + 12)}px, ${Math.round(screenY + 12)}px)`;
+    ui.hoverPrompt.hidden = false;
+  }
+}
+
+function pickSelectableTarget(selection) {
+  if (!selection?.target) return false;
+  const { type, target, label } = selection;
+
+  if (type === 'tube') {
+    selectTube(target);
+    gestureLabel = 'E Pick Tube';
+    return true;
+  }
+
+  if (type === 'object') {
+    selectSceneObject(target);
+    gestureLabel = `E Pick ${label}`;
+    return true;
+  }
+
+  return false;
+}
+
+function interactWithSelection(screenX = hoverSelection.x, screenY = hoverSelection.y) {
+  if (placement.active) {
+    releaseHeldTube();
+    gestureLabel = 'E Place';
+    return true;
+  }
+
+  if (selectedSceneObject) {
+    deselectSceneObject();
+    gestureLabel = 'E Release';
+    return true;
+  }
+
+  if (hoverSelection.target && pickSelectableTarget(hoverSelection)) {
+    clearHoverSelection();
+    return true;
+  }
+
+  const selection = pickSelectable(screenX, screenY);
+  const picked = pickSelectableTarget(selection);
+  if (picked) clearHoverSelection();
+  return picked;
+}
+
 function copyTubeUnderReticle(screenX = window.innerWidth / 2, screenY = window.innerHeight / 2) {
   const tube = pickTube(screenX, screenY);
   if (tube) copyTube(tube);
 }
 
-function pickHeightHandle(screenX, screenY) {
-  if (!placement.active || !heightHandle.visible) return false;
+function pickGizmoHandle(screenX, screenY) {
+  if (!hasActiveEditTarget() || !heightHandle.visible) return null;
   raycaster.setFromCamera(screenToNdc(screenX, screenY), camera);
-  return raycaster.intersectObjects(heightHandle.children, true).length > 0;
+  const intersections = raycaster.intersectObjects(heightHandle.children, true);
+  return intersections[0]?.object.userData.gizmoAxis ?? null;
 }
 
 function applyDeadzone(value) {
@@ -1196,28 +1746,44 @@ function applyDeadzone(value) {
   return value;
 }
 
-function requestScenePointerLock() {
+function requestImmersiveMode() {
+  hideStarterHint();
   if (document.pointerLockElement === canvas) return;
   if (typeof canvas.requestPointerLock !== 'function') {
-    pointerLockNotice = 'Pointer lock unsupported';
+    pointerLockNotice = 'Immersive unsupported';
+    immersiveMode = false;
     return;
   }
 
   try {
     const lockResult = canvas.requestPointerLock();
-    pointerLockNotice = 'Pointer lock requested';
+    immersiveMode = true;
+    pointerLockNotice = 'Immersive requested';
     if (lockResult?.catch) {
       lockResult
         .then(() => {
-          pointerLockNotice = 'Pointer lock on';
+          immersiveMode = true;
+          pointerLockNotice = 'Immersive mode on';
         })
         .catch(() => {
-          pointerLockNotice = 'Pointer lock blocked; drag to look';
+          immersiveMode = false;
+          pointerLockNotice = 'Immersive blocked; use right drag';
         });
     }
   } catch {
-    pointerLockNotice = 'Pointer lock blocked; drag to look';
+    immersiveMode = false;
+    pointerLockNotice = 'Immersive blocked; use right drag';
   }
+}
+
+function toggleImmersiveMode() {
+  hideStarterHint();
+  if (document.pointerLockElement === canvas) {
+    document.exitPointerLock();
+    return;
+  }
+
+  requestImmersiveMode();
 }
 
 function updatePinchState() {
@@ -1257,8 +1823,17 @@ function updatePinchState() {
 }
 
 function updateGamepad(deltaTime) {
-  const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
-  const pad = pads[0];
+  const pads = navigator.getGamepads?.();
+  let pad = null;
+  if (pads) {
+    for (let i = 0; i < pads.length; i += 1) {
+      if (pads[i]) {
+        pad = pads[i];
+        break;
+      }
+    }
+  }
+
   if (!pad) {
     controllerLabel = 'Press A to connect';
     return;
@@ -1346,9 +1921,15 @@ function animate() {
   const deltaTime = Math.min(clock.getDelta(), 0.05);
   updateCamera(deltaTime);
   updateGamepad(deltaTime);
+  updateImmersiveReticleTarget();
   updatePlacement();
   updateSelectedObjectHelper();
-  updateHud();
+  updateEditGizmo();
+  hudUpdateElapsed += deltaTime;
+  if (hudUpdateElapsed >= HUD_UPDATE_INTERVAL) {
+    updateHud();
+    hudUpdateElapsed = 0;
+  }
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
@@ -1362,25 +1943,25 @@ function formatVec(v) {
 }
 
 function syncSliders() {
-  document.querySelector('#heightSlider').value = placement.heightOffset;
+  if (document.activeElement !== ui.heightSlider) setValue(ui.heightSlider, placement.heightOffset);
 }
 
 function syncRoomInputs() {
-  document.querySelector('#roomWidth').value = room.width;
-  document.querySelector('#roomDepth').value = room.depth;
-  document.querySelector('#roomHeight').value = room.height;
-  document.querySelector('#roomSummary').textContent = `Room ${room.width.toFixed(1)} x ${room.depth.toFixed(1)} x ${room.height.toFixed(1)} m`;
+  setValue(ui.roomWidth, room.width);
+  setValue(ui.roomDepth, room.depth);
+  setValue(ui.roomHeight, room.height);
+  setText(ui.roomSummary, `Room ${room.width.toFixed(1)} x ${room.depth.toFixed(1)} x ${room.height.toFixed(1)} m`);
 }
 
 function syncSceneInputs() {
   const objectLabel = sceneObjects.length === 1 ? 'object' : 'objects';
-  document.querySelector('#terrainToggle').checked = terrainSettings.enabled;
-  document.querySelector('#terrainState').textContent = terrainSettings.enabled ? 'On' : 'Off';
-  document.querySelector('#objectCount').textContent = `${sceneObjects.length} ${objectLabel}`;
-  document.querySelector('#sceneSummary').textContent = `Scene ${terrainSettings.enabled ? 'terrain' : 'flat'} · ${sceneObjects.length} ${objectLabel}`;
-  document.querySelector('#selectedObjectValue').textContent = selectedSceneObject
+  setChecked(ui.terrainToggle, terrainSettings.enabled);
+  setText(ui.terrainState, terrainSettings.enabled ? 'On' : 'Off');
+  setText(ui.objectCount, `${sceneObjects.length} ${objectLabel}`);
+  setText(ui.sceneSummary, `Scene ${terrainSettings.enabled ? 'terrain' : 'flat'} · ${sceneObjects.length} ${objectLabel}`);
+  setText(ui.selectedObjectValue, selectedSceneObject
     ? `${selectedSceneObject.label} selected`
-    : 'No scene object selected';
+    : 'No scene object selected');
 }
 
 function setRoomDimension(key, value) {
@@ -1393,16 +1974,15 @@ function setRoomDimension(key, value) {
   syncSceneInputs();
 }
 
-const overlayPanels = [...document.querySelectorAll('.room-panel, .scene-panel, .debug')];
 let overlayPanelSyncing = false;
 
 function closeOverlayPanels(exceptPanel = null) {
-  overlayPanels.forEach((panel) => {
+  ui.overlayPanels.forEach((panel) => {
     if (panel !== exceptPanel) panel.open = false;
   });
 }
 
-overlayPanels.forEach((panel) => {
+ui.overlayPanels.forEach((panel) => {
   panel.addEventListener('toggle', () => {
     if (overlayPanelSyncing || !panel.open) return;
     overlayPanelSyncing = true;
@@ -1411,7 +1991,7 @@ overlayPanels.forEach((panel) => {
   });
 });
 
-document.querySelectorAll('[data-panel-toggle]').forEach((button) => {
+ui.panelToggleButtons.forEach((button) => {
   button.addEventListener('click', () => {
     const panel = document.querySelector(`.${button.dataset.panelToggle}`);
     if (!panel) return;
@@ -1423,17 +2003,14 @@ document.querySelectorAll('[data-panel-toggle]').forEach((button) => {
   });
 });
 
-const controlDock = document.querySelector('.control-dock');
-const fineControlsButton = document.querySelector('#toggleFineControls');
-
 function setFineControlsOpen(open) {
-  controlDock.classList.toggle('fine-open', open);
-  fineControlsButton.setAttribute('aria-expanded', String(open));
-  fineControlsButton.textContent = open ? 'Hide' : 'Tune';
+  ui.controlDock.classList.toggle('fine-open', open);
+  ui.fineControlsButton.setAttribute('aria-expanded', String(open));
+  setText(ui.fineControlsButton, open ? 'Hide' : 'Tune');
 }
 
-fineControlsButton.addEventListener('click', () => {
-  setFineControlsOpen(!controlDock.classList.contains('fine-open'));
+ui.fineControlsButton.addEventListener('click', () => {
+  setFineControlsOpen(!ui.controlDock.classList.contains('fine-open'));
 });
 
 window.addEventListener('resize', () => {
@@ -1444,6 +2021,7 @@ window.addEventListener('resize', () => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (isEditableElement(event.target)) return;
   pressedKeys.add(event.code);
   const fine = event.altKey ? 0.04 : 0.12;
   const nudgeStep = event.altKey ? 0.01 : event.shiftKey ? 0.1 : 0.05;
@@ -1464,15 +2042,38 @@ window.addEventListener('keydown', (event) => {
     }
     dispatch({ type: 'CANCEL_PLACE' });
   }
+  if (event.key.toLowerCase() === 'i') {
+    event.preventDefault();
+    toggleImmersiveMode();
+    return;
+  }
+  if (event.key.toLowerCase() === 'h') {
+    event.preventDefault();
+    hideStarterHint();
+    setGuideEnabled(!guideEnabled);
+    return;
+  }
   if (event.key.toLowerCase() === 'q') {
     if (placement.active) dispatch({ type: 'ROTATE', delta: -Math.PI / 18 });
     else rotateSelectedSceneObject(-Math.PI / 18);
   }
   if (event.key.toLowerCase() === 'e') {
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    const screenX = document.pointerLockElement === canvas ? window.innerWidth / 2 : hoverSelection.x || window.innerWidth / 2;
+    const screenY = document.pointerLockElement === canvas ? window.innerHeight / 2 : hoverSelection.y || window.innerHeight / 2;
+    if (interactWithSelection(screenX, screenY)) {
+      event.preventDefault();
+      return;
+    }
+  }
+  if (event.key.toLowerCase() === 'r') {
     if (placement.active) dispatch({ type: 'ROTATE', delta: Math.PI / 18 });
     else rotateSelectedSceneObject(Math.PI / 18);
   }
-  if (event.key.toLowerCase() === 'r') startNewTube();
+  if (event.key.toLowerCase() === 'n') startNewTube();
   if (!placement.active && selectedSceneObject && event.key.toLowerCase() === 'v') {
     event.preventDefault();
     duplicateSelectedSceneObject();
@@ -1516,11 +2117,17 @@ window.addEventListener('keyup', (event) => {
 });
 
 document.addEventListener('pointerlockchange', () => {
-  pointerLockNotice = document.pointerLockElement === canvas ? 'Pointer lock on' : 'Pointer lock off';
+  immersiveMode = document.pointerLockElement === canvas;
+  pointerLockNotice = immersiveMode ? 'Immersive mode on' : 'Editor mode';
+  immersiveHeightAdjusting = false;
+  clearHoverSelection();
 });
 
 document.addEventListener('pointerlockerror', () => {
-  pointerLockNotice = 'Pointer lock blocked; drag to look';
+  immersiveMode = false;
+  immersiveHeightAdjusting = false;
+  pointerLockNotice = 'Immersive blocked; use right drag';
+  clearHoverSelection();
 });
 
 window.addEventListener('gamepadconnected', (event) => {
@@ -1533,8 +2140,20 @@ window.addEventListener('gamepaddisconnected', () => {
 
 canvas.addEventListener('pointerdown', (event) => {
   event.preventDefault();
+  clearHoverSelection();
 
-  if (document.pointerLockElement === canvas) return;
+  if (document.pointerLockElement === canvas) {
+    if (event.pointerType === 'mouse' && event.button === 0) {
+      handlePrimarySceneTap(window.innerWidth / 2, window.innerHeight / 2, 'immersive');
+    } else if (event.pointerType === 'mouse' && event.button === 2 && hasActiveEditTarget()) {
+      immersiveHeightAdjusting = true;
+      gestureLabel = 'Immersive Height';
+    } else if (event.pointerType === 'mouse' && event.button === 1) {
+      copyTubeUnderReticle();
+      gestureLabel = 'Reticle Copy';
+    }
+    return;
+  }
 
   if (event.pointerType === 'mouse' && event.button === 1) {
     if (!placement.active && selectedSceneObject) {
@@ -1557,37 +2176,46 @@ canvas.addEventListener('pointerdown', (event) => {
 
   if (activePointers.size === 1) {
     const primaryPointer = event.pointerType !== 'mouse' || event.button === 0;
-    const handlePicked = placement.active && primaryPointer
-      ? pickHeightHandle(event.clientX, event.clientY)
-      : false;
+    const gizmoAxis = hasActiveEditTarget() && primaryPointer
+      ? pickGizmoHandle(event.clientX, event.clientY)
+      : null;
     const heldTubePicked = placement.active && primaryPointer
       ? pickHeldTube(event.clientX, event.clientY)
       : false;
     const selectedObjectPicked = !placement.active && selectedSceneObject && primaryPointer
       ? pickSceneObject(event.clientX, event.clientY) === selectedSceneObject
       : false;
+    const placedTubePicked = !placement.active && primaryPointer
+      ? !!pickTube(event.clientX, event.clientY)
+      : false;
     const touchLookZone = event.pointerType === 'touch' && event.clientX > window.innerWidth * 0.46;
     dragState.active = true;
     dragState.pointerId = event.pointerId;
     dragState.pointerType = event.pointerType;
     dragState.button = event.button;
-    dragState.mode = handlePicked
+    dragState.mode = gizmoAxis === 'y'
       ? 'height'
-      : event.pointerType === 'mouse' && event.button === 2
-        ? 'look'
-        : touchLookZone && !heldTubePicked && !selectedObjectPicked
+      : gizmoAxis
+        ? 'gizmo-axis'
+        : event.pointerType === 'mouse' && event.button === 2
           ? 'look'
-          : !placement.active && selectedObjectPicked
-          ? 'object'
-          : placement.active && (heldTubePicked || event.pointerType === 'mouse')
-            ? 'primary'
-            : 'look';
+          : touchLookZone && !heldTubePicked && !selectedObjectPicked && !placedTubePicked
+            ? 'look'
+            : !placement.active && selectedObjectPicked
+              ? 'object'
+              : !placement.active && primaryPointer
+                ? 'primary'
+                : placement.active && (heldTubePicked || event.pointerType === 'mouse')
+                  ? 'primary'
+                  : 'look';
     dragState.startX = event.clientX;
     dragState.startY = event.clientY;
     dragState.lastX = event.clientX;
     dragState.lastY = event.clientY;
     dragState.moved = false;
     dragState.planeReady = false;
+    dragState.gizmoAxis = gizmoAxis;
+    if (hasActiveEditTarget() && dragState.mode === 'gizmo-axis') beginGizmoAxisDrag(gizmoAxis, event.clientX, event.clientY);
     if (placement.active && dragState.mode === 'primary') beginHeldTubeDrag(event.clientX, event.clientY);
     if (!placement.active && dragState.mode === 'object') beginSelectedSceneObjectDrag(event.clientX, event.clientY);
   }
@@ -1596,7 +2224,11 @@ canvas.addEventListener('pointerdown', (event) => {
 });
 
 canvas.addEventListener('pointermove', (event) => {
-  if (!activePointers.has(event.pointerId)) return;
+  if (!activePointers.has(event.pointerId)) {
+    updateHoverSelection(event.clientX, event.clientY, event.pointerType);
+    return;
+  }
+  clearHoverSelection();
 
   const pointer = activePointers.get(event.pointerId);
   pointer.lastX = pointer.x;
@@ -1621,13 +2253,20 @@ canvas.addEventListener('pointermove', (event) => {
     dragState.moved = true;
   }
 
-  if (placement.active) {
-    if (dragState.mode === 'height') {
-      dispatch({ type: 'ADJUST_HEIGHT', delta: -deltaY * 0.006 });
-      gestureLabel = 'Height Handle';
-      return;
-    }
+  if (hasActiveEditTarget() && dragState.mode === 'height') {
+    adjustActiveTargetHeight(-deltaY * IMMERSIVE_HEIGHT_SPEED);
+    gestureLabel = 'Gizmo Y';
+    return;
+  }
 
+  if (hasActiveEditTarget() && dragState.mode === 'gizmo-axis') {
+    if (dragGizmoAxisToPointer(event.clientX, event.clientY)) {
+      gestureLabel = `Gizmo ${dragState.gizmoAxis.toUpperCase()}`;
+    }
+    return;
+  }
+
+  if (placement.active) {
     if (dragState.mode === 'look') {
       lookFromDelta(deltaX, deltaY, event.pointerType === 'touch' ? TOUCH_LOOK_SPEED : LOOK_SPEED);
       gestureLabel = 'Right Look';
@@ -1652,6 +2291,14 @@ canvas.addEventListener('pointermove', (event) => {
 });
 
 canvas.addEventListener('pointerup', (event) => {
+  if (document.pointerLockElement === canvas) {
+    if (event.pointerType === 'mouse' && event.button === 2) {
+      immersiveHeightAdjusting = false;
+      gestureLabel = hasActiveEditTarget() ? 'Immersive Move' : gestureLabel;
+    }
+    return;
+  }
+
   const wasPrimaryDrag = dragState.active && dragState.pointerId === event.pointerId;
   const shouldTap = wasPrimaryDrag && ['primary', 'object'].includes(dragState.mode) && !dragState.moved && activePointers.size === 1;
   const now = performance.now();
@@ -1675,6 +2322,7 @@ canvas.addEventListener('pointerup', (event) => {
   if (wasPrimaryDrag) {
     dragState.active = false;
     dragState.pointerId = null;
+    dragState.gizmoAxis = null;
   }
 });
 
@@ -1682,20 +2330,45 @@ canvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
 });
 
+canvas.addEventListener('pointerleave', (event) => {
+  if (!activePointers.has(event.pointerId)) clearHoverSelection();
+});
+
 canvas.addEventListener('pointercancel', (event) => {
+  clearHoverSelection();
+  immersiveHeightAdjusting = false;
   if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   activePointers.delete(event.pointerId);
   updatePinchState();
   if (dragState.pointerId === event.pointerId) {
     dragState.active = false;
     dragState.pointerId = null;
+    dragState.gizmoAxis = null;
   }
 });
 
 window.addEventListener('mousemove', (event) => {
   if (document.pointerLockElement !== canvas) return;
+  if ((immersiveHeightAdjusting || (event.buttons & 2) !== 0) && hasActiveEditTarget()) {
+    adjustActiveTargetHeight(-event.movementY * IMMERSIVE_HEIGHT_SPEED);
+    if (event.movementX !== 0) lookFromDelta(event.movementX, 0, LOOK_SPEED * 0.72);
+    return;
+  }
   gestureLabel = 'Mouse Look';
   lookFromDelta(event.movementX, event.movementY);
+});
+
+window.addEventListener('mousedown', (event) => {
+  if (document.pointerLockElement === canvas && event.button === 2 && hasActiveEditTarget()) {
+    immersiveHeightAdjusting = true;
+    gestureLabel = 'Immersive Height';
+  }
+});
+
+window.addEventListener('mouseup', (event) => {
+  if (document.pointerLockElement === canvas && event.button === 2) {
+    immersiveHeightAdjusting = false;
+  }
 });
 
 canvas.addEventListener('wheel', (event) => {
@@ -1706,17 +2379,11 @@ canvas.addEventListener('wheel', (event) => {
   else rotateSelectedSceneObject(direction * Math.PI / 18);
 }, { passive: false });
 
-document.querySelector('#startPlacement').addEventListener('click', () => startNewTube());
-document.querySelector('#lockCursor').addEventListener('click', () => {
-  if (document.pointerLockElement === canvas) {
-    document.exitPointerLock();
-    return;
-  }
-
-  requestScenePointerLock();
-});
-document.querySelector('#place').addEventListener('click', () => dispatch({ type: 'CONFIRM_PLACE' }));
-document.querySelector('#cancel').addEventListener('click', () => dispatch({ type: 'CANCEL_PLACE' }));
+ui.startPlacement.addEventListener('click', () => startNewTube());
+ui.lockCursor.addEventListener('click', () => toggleImmersiveMode());
+ui.toggleGuide.addEventListener('click', () => setGuideEnabled(!guideEnabled));
+ui.place.addEventListener('click', () => dispatch({ type: 'CONFIRM_PLACE' }));
+ui.cancel.addEventListener('click', () => dispatch({ type: 'CANCEL_PLACE' }));
 let duplicateCommandHandledAt = 0;
 function handleDuplicateCommandEvent(event) {
   if (event.type === 'pointerdown' && event.pointerType === 'mouse' && event.button !== 0) return;
@@ -1733,49 +2400,49 @@ function handleDuplicateCommandEvent(event) {
 }
 document.addEventListener('pointerdown', handleDuplicateCommandEvent, true);
 document.addEventListener('click', handleDuplicateCommandEvent, true);
-document.querySelector('#rotateLeft').addEventListener('click', () => dispatch({ type: 'ROTATE', delta: -Math.PI / 18 }));
-document.querySelector('#rotateRight').addEventListener('click', () => dispatch({ type: 'ROTATE', delta: Math.PI / 18 }));
-document.querySelector('#cycleAxis').addEventListener('click', () => dispatch({ type: 'CYCLE_ROTATION_AXIS' }));
-document.querySelector('#heightDown').addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: -0.15 }));
-document.querySelector('#heightUp').addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: 0.15 }));
-document.querySelectorAll('[data-mode]').forEach((button) => {
+ui.rotateLeft.addEventListener('click', () => dispatch({ type: 'ROTATE', delta: -Math.PI / 18 }));
+ui.rotateRight.addEventListener('click', () => dispatch({ type: 'ROTATE', delta: Math.PI / 18 }));
+ui.cycleAxis.addEventListener('click', () => dispatch({ type: 'CYCLE_ROTATION_AXIS' }));
+ui.heightDown.addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: -0.15 }));
+ui.heightUp.addEventListener('click', () => dispatch({ type: 'ADJUST_HEIGHT', delta: 0.15 }));
+ui.modeButtons.forEach((button) => {
   button.addEventListener('click', () => dispatch({ type: 'SET_MODE', mode: button.dataset.mode }));
 });
-document.querySelector('#heightSlider').addEventListener('input', (event) => {
+ui.heightSlider.addEventListener('input', (event) => {
   dispatch({ type: 'SET_HEIGHT', value: Number(event.target.value) });
 });
-document.querySelector('#roomWidth').addEventListener('input', (event) => {
+ui.roomWidth.addEventListener('input', (event) => {
   setRoomDimension('width', Number(event.target.value));
 });
-document.querySelector('#roomDepth').addEventListener('input', (event) => {
+ui.roomDepth.addEventListener('input', (event) => {
   setRoomDimension('depth', Number(event.target.value));
 });
-document.querySelector('#roomHeight').addEventListener('input', (event) => {
+ui.roomHeight.addEventListener('input', (event) => {
   setRoomDimension('height', Number(event.target.value));
 });
-document.querySelector('#terrainToggle').addEventListener('change', (event) => {
+ui.terrainToggle.addEventListener('change', (event) => {
   terrainSettings.enabled = event.target.checked;
   rebuildTerrain();
   syncSceneObjectHeights();
   syncSceneInputs();
   gestureLabel = terrainSettings.enabled ? 'Terrain On' : 'Terrain Off';
 });
-document.querySelectorAll('[data-add-object]').forEach((button) => {
+ui.addObjectButtons.forEach((button) => {
   button.addEventListener('click', () => addSceneObject(button.dataset.addObject));
 });
-document.querySelector('#duplicateObject').addEventListener('click', () => {
+ui.duplicateObject.addEventListener('click', () => {
   if (selectedSceneObject) duplicateSelectedSceneObject();
 });
-document.querySelector('#clearObjects').addEventListener('click', () => clearSceneObjects());
-document.querySelector('#importModel').addEventListener('click', () => {
-  document.querySelector('#modelInput').click();
+ui.clearObjects.addEventListener('click', () => clearSceneObjects());
+ui.importModel.addEventListener('click', () => {
+  ui.modelInput.click();
 });
-document.querySelector('#modelInput').addEventListener('change', async (event) => {
+ui.modelInput.addEventListener('change', async (event) => {
   const [file] = event.target.files;
   await importModelFile(file);
   event.target.value = '';
 });
-document.querySelectorAll('[data-touch-move]').forEach((button) => {
+ui.touchMoveButtons.forEach((button) => {
   const move = button.dataset.touchMove;
   const start = (event) => {
     event.preventDefault();
@@ -1788,6 +2455,8 @@ document.querySelectorAll('[data-touch-move]').forEach((button) => {
   button.addEventListener('pointercancel', stop);
 });
 
+registerHelperTooltips();
+window.setTimeout(hideStarterHint, STARTER_HINT_DURATION);
 dispatch({ type: 'AIM', screenX: window.innerWidth / 2, screenY: window.innerHeight / 2 });
 rebuildRoomHelpers();
 rebuildTerrain();

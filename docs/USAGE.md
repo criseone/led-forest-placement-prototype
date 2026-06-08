@@ -25,8 +25,14 @@ Keyboard and mouse:
 
 - `W`, `A`, `S`, `D`: move camera relative to view direction.
 - Drag with right mouse button: look around.
-- `Lock Cursor`: requests browser pointer lock for game-like mouse movement.
-- `Esc`: releases pointer lock or cancels the current active edit.
+- `I` or `Immersive`: desktop-only game-style view mode with cursor capture.
+- In Immersive mode, mouse movement looks around and left click places/picks through the center reticle.
+- In Immersive mode, press `N` to add a new tube at the center reticle.
+- If a tube or scene object is active in Immersive mode, it follows the center reticle on X/Z until you click to place/release it.
+- If a tube or scene object is active in Immersive mode, hold right mouse and move up/down to adjust height.
+- `H`: toggles the contextual helper. With the helper open, hovering UI controls shows tooltip text in the helper.
+- Hover a selectable tube/object and press `E` to pick it up. If something is already active, `E` places/releases it.
+- `Esc`: exits Immersive mode or cancels the current active edit.
 
 Mobile:
 
@@ -58,13 +64,14 @@ Tube behavior:
 Controls:
 
 - Left-drag the active tube: move it on the X/Z plane.
-- Height handle: drag the vertical arrow handle beside the tube to adjust height.
+- Side gizmo: drag the green vertical handle for height, red X arrow for X movement, and blue Z arrow for Z movement.
 - Arrow keys: nudge relative to the camera angle.
 - `Shift` + arrow keys: 10 cm nudges.
 - `Alt` + arrow keys: 1 cm nudges.
 - `PageUp` / `PageDown`: raise/lower active tube.
 - Mouse wheel: rotate around the view-inferred axis.
-- `Q` / `E`: rotate left/right.
+- `Q` / `R`: rotate left/right.
+- `N`: create a fresh tube.
 - `Enter` or `Place`: commit the tube.
 - `Esc` or `Cancel`: cancel placement.
 
@@ -109,9 +116,11 @@ Scene object controls:
 - Click object: select.
 - Click selected object again or click empty space: release.
 - Left-drag the selected object body: move object on X/Z plane.
+- Side gizmo: drag the green vertical handle for height, red X arrow for X movement, and blue Z arrow for Z movement.
 - Arrow keys: nudge relative to camera angle.
 - `PageUp` / `PageDown`: raise/lower object.
-- `Q` / `E`: rotate object around vertical axis.
+- `Q` / `R`: rotate object around vertical axis.
+- `E`: release the selected object.
 - `V` or Scene panel `Duplicate`: duplicate selected object.
 - `Delete`: remove selected object.
 - `Clear`: remove all scene objects.

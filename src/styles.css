@@ -24,6 +24,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   width: 100%;
@@ -134,6 +138,13 @@ button.primary {
   font-size: 12px;
 }
 
+.top-actions .icon-action {
+  min-width: 36px;
+  width: 36px;
+  padding: 0;
+  font-weight: 760;
+}
+
 .button-icon {
   display: inline-block;
   margin-right: 5px;
@@ -174,6 +185,44 @@ button.primary {
   width: 4px;
   height: 4px;
   background: #ecf4f8;
+}
+
+.hover-prompt {
+  position: fixed;
+  z-index: 9;
+  left: 0;
+  top: 0;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid rgba(101, 228, 163, 0.54);
+  border-radius: 7px;
+  color: #ecfdf6;
+  background: rgba(8, 14, 18, 0.84);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(12px);
+  font-size: 11px;
+  font-weight: 720;
+  pointer-events: none;
+}
+
+.starter-hint {
+  position: fixed;
+  z-index: 6;
+  left: 50%;
+  top: calc(var(--safe-top) + 18px);
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100vw - var(--safe-left) - var(--safe-right) - 32px));
+  padding: 7px 11px;
+  border: 1px solid rgba(101, 228, 163, 0.28);
+  border-radius: 8px;
+  color: #edf7fb;
+  background: rgba(8, 13, 17, 0.68);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  font-size: 12px;
+  font-weight: 720;
+  text-align: center;
+  pointer-events: none;
 }
 
 .hud {
@@ -223,6 +272,81 @@ button.primary {
 
 .hud-status strong {
   color: var(--green);
+}
+
+.guide-helper {
+  position: fixed;
+  z-index: 7;
+  top: calc(var(--safe-top) + 300px);
+  left: calc(var(--safe-left) + 14px);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  width: min(292px, calc(100vw - 28px));
+  padding: 9px 10px;
+  border: 1px solid rgba(101, 228, 163, 0.22);
+  border-radius: 8px;
+  color: #e8f5f1;
+  background: rgba(7, 12, 16, 0.76);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+}
+
+.guide-avatar {
+  position: relative;
+  width: 34px;
+  height: 38px;
+  border: 1px solid rgba(236, 244, 248, 0.44);
+  border-radius: 16px 16px 10px 10px;
+  background: linear-gradient(180deg, rgba(236, 244, 248, 0.92), rgba(101, 228, 163, 0.32));
+  box-shadow: 0 0 24px rgba(101, 228, 163, 0.2);
+}
+
+.guide-avatar::before,
+.guide-avatar::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #10161d;
+}
+
+.guide-avatar::before {
+  left: 10px;
+}
+
+.guide-avatar::after {
+  right: 10px;
+}
+
+.guide-avatar span {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: -1px;
+  height: 8px;
+  border-radius: 0 0 999px 999px;
+  background:
+    radial-gradient(circle at 20% 0, transparent 0 5px, rgba(236, 244, 248, 0.92) 5px),
+    radial-gradient(circle at 50% 0, transparent 0 5px, rgba(236, 244, 248, 0.92) 5px),
+    radial-gradient(circle at 80% 0, transparent 0 5px, rgba(236, 244, 248, 0.92) 5px);
+}
+
+.guide-title {
+  margin-bottom: 2px;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+#guideText {
+  color: #d7e5e1;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .debug,
@@ -483,8 +607,19 @@ body:not(.is-placing):not(.has-selection) .control-dock {
     font-size: 11px;
   }
 
+  .top-actions .icon-action {
+    min-width: 34px;
+    width: 34px;
+  }
+
   #lockCursor {
     display: none;
+  }
+
+  .starter-hint {
+    top: calc(var(--safe-top) + 50px);
+    font-size: 11px;
+    padding: 6px 9px;
   }
 
   .button-icon {
@@ -512,6 +647,23 @@ body:not(.is-placing):not(.has-selection) .control-dock {
 
   .debug {
     display: none;
+  }
+
+  .guide-helper {
+    top: calc(var(--safe-top) + 136px);
+    left: calc(var(--safe-left) + 10px);
+    width: min(240px, calc(100vw - var(--safe-left) - var(--safe-right) - 20px));
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 8px;
+  }
+
+  .guide-avatar {
+    width: 29px;
+    height: 32px;
+  }
+
+  #guideText {
+    font-size: 11px;
   }
 
   .room-panel,
